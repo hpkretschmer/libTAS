@@ -34,8 +34,13 @@
 namespace libtas {
 
 DEFINE_ORIG_POINTER(XShmPutImage)
+DEFINE_ORIG_POINTER(XPutImage)
 
 XImage* x11::gameXImage = nullptr;
+
+/* XPutImage callers may pass a temporary XImage structure, so we keep a copy.
+ * Its pixel data must stay valid, which is the case for Chromium. */
+static XImage gamePutXImage;
 
 OVERRIDE Bool XShmPutImage(
     Display*        dpy,
@@ -82,6 +87,68 @@ OVERRIDE Bool XShmPutImage(
 
     return True;
     // return orig::XShmPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, src_width, src_height, send_event);
+}
+
+OVERRIDE int XPutImage(
+    Display*        dpy,
+    Drawable        d,
+    GC          gc,
+    XImage*     image,
+    int         src_x,
+    int         src_y,
+    int         dst_x,
+    int         dst_y,
+    unsigned int    width,
+    unsigned int    height
+)
+{
+    LINK_NAMESPACE_GLOBAL(XPutImage);
+
+    if (GlobalState::isNative())
+        return orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height);
+
+    LOGTRACE(LCF_WINDOW, "%s called with drawable %d", __func__, d);
+
+    /* Only handle draws to a game window (not pixmaps), and only if no other
+     * presentation API is used. Software renderers (e.g. Chromium) present
+     * each frame with a single XPutImage of the damaged area. */
+    const int other_video = GameInfo::SDL1 | GameInfo::SDL2 | GameInfo::SDL3 |
+        GameInfo::VDPAU | GameInfo::XSHM | GameInfo::VULKAN;
+    if ((Global::game_info.video & other_video) || !XlibGameWindow::isGameWindow(d))
+        return orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height);
+
+    if (!(Global::game_info.video & GameInfo::XIMAGE)) {
+        Global::game_info.video |= GameInfo::XIMAGE;
+        Global::game_info.tosend = true;
+    }
+
+    gamePutXImage = *image;
+    x11::gameXImage = &gamePutXImage;
+
+    XlibGameWindow::promote(d);
+
+    ScreenCapture::resize(image->width, image->height);
+
+    /* The image only contains the damaged area of the frame, so if a previous
+     * draw was skipped (fast-forward), we must draw the whole image. */
+    static bool full_redraw = false;
+    if (Global::skipping_draw)
+        full_redraw = true;
+
+    /* Start the frame boundary and pass the function to draw */
+    static RenderHUD renderHUD;
+    int ret = 0;
+    frameBoundary([&] () {
+        if (full_redraw) {
+            NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, 0, 0, dst_x - src_x, dst_y - src_y, image->width, image->height));
+            full_redraw = false;
+        }
+        else {
+            NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height));
+        }
+    }, renderHUD);
+
+    return ret;
 }
 
 }

@@ -614,6 +614,7 @@ static void handleRawRequest(xcb_connection_t* c, struct iovec* vector, std::fun
                                                 xlibEventQueueList.insert(x11::gameDisplays[d], &xev);
                                             }
                                         }
+                                        xiCookieDataFree(dev);
                                     }
                                 }
                             }

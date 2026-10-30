@@ -239,6 +239,7 @@ static void generateKeyEvent(int event_key, bool pressed)
         }
 
         LOG(LL_DEBUG, LCF_EVENTS | LCF_KEYBOARD, "Generate XIEvent %s with keycode %d", pressed?"KeyPress":"KeyRelease", dev->detail);
+        xiCookieDataFree(dev);
     }
 
     if (Global::game_info.keyboard & GameInfo::XIRAWEVENTS) {
@@ -254,6 +255,7 @@ static void generateKeyEvent(int event_key, bool pressed)
         xlibEventQueueList.insert(&event);
 
         LOG(LL_DEBUG, LCF_EVENTS | LCF_KEYBOARD, "Generate XIEvent %s with keycode %d", pressed?"RawKeyPress":"RawKeyRelease", rev->detail);
+        xiCookieDataFree(rev);
     }
 #endif
 }
@@ -815,6 +817,7 @@ static void generateMouseMotionEvents(void)
         xlibEventQueueList.insert(&event);
 
         LOG(LL_DEBUG, LCF_EVENTS | LCF_MOUSE, "Generate XIEvent XI_RawMotion");
+        xiCookieDataFree(rev);
     }
 #endif
 
@@ -935,7 +938,7 @@ static void generateMouseMotionEvents(void)
         dev->root_x = dev->event_x;
         dev->root_y = dev->event_y;
         dev->detail = 0;
-        dev->valuators.mask = reinterpret_cast<unsigned char *>(1); // Dangling but non-null pointer
+        dev->valuators.mask = reinterpret_cast<unsigned char *>(1); // Dangling but non-null pointer, never freed
         dev->valuators.mask_len = 0;
         for (int d=0; d<GAMEDISPLAYNUM; d++) {
             if (x11::gameDisplays[d]) {
@@ -945,6 +948,7 @@ static void generateMouseMotionEvents(void)
         }
 
         LOG(LL_DEBUG, LCF_EVENTS | LCF_MOUSE, "Generate XIEvent XI_Motion");
+        xiCookieDataFree(dev);
     }
 #endif
 }
@@ -1109,6 +1113,7 @@ static void generateMouseButtonEvent(int button, bool pressed)
                 xlibEventQueueList.insert(x11::gameDisplays[d], &event);
             }
         }
+        xiCookieDataFree(dev);
     }
 
     if (Global::game_info.mouse & GameInfo::XIRAWEVENTS) {
@@ -1130,6 +1135,7 @@ static void generateMouseButtonEvent(int button, bool pressed)
         rev->time = timestamp;
         rev->detail = button+1;
         xlibEventQueueList.insert(&event);
+        xiCookieDataFree(rev);
     }
 #endif
 }

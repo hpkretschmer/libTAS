@@ -38,6 +38,9 @@ void promote(Window w);
 /* Returns the current game window */
 Window get();
 
+/* Returns if the window is one of the game top-level windows */
+bool isGameWindow(Window w);
+
 /* Delete a window id from the list and if game window, promote the next one
  * in the list */ 
 void pop(Window w);

@@ -116,6 +116,16 @@ bool isSaveFile(const char *file)
     if (!file)
         return false;
 
+    /* Check if the file lies in shared memory. This must be checked before
+     * stat(), because shared memory files are often created right away
+     * (e.g. Chromium with mkstemp()), and would be treated as new savefiles. */
+    if (strstr(file, "/dev/shm"))
+        return false;
+
+    /* We don't need to keep mesa shader cache files */
+    if (strstr(file, "/.cache/mesa_shader_cache"))
+        return false;
+
     /* Check if file is a dev file */
     GlobalNative gn;
     struct stat filestat;
@@ -140,14 +150,6 @@ bool isSaveFile(const char *file)
 
     /* Check if the file is a message queue, semaphore or shared memory object */
     if (S_TYPEISMQ(&filestat) || S_TYPEISSEM(&filestat) || S_TYPEISSHM(&filestat))
-        return false;
-
-    /* Check if the file lies in shared memory */
-    if (strstr(file, "/dev/shm"))
-        return false;
-
-    /* We don't need to keep mesa shader cache files */
-    if (strstr(file, "/.cache/mesa_shader_cache"))
         return false;
 
     return true;

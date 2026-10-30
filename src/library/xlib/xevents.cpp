@@ -687,38 +687,8 @@ void XFreeEventData(Display* dpy, XGenericEventCookie* cookie)
         return orig::XFreeEventData(dpy, cookie);
     }
 
-    if (cookie && cookie->data) {
-        XIEvent* xiev = static_cast<XIEvent*>(cookie->data);
-        XIRawEvent *rev;
-        XIDeviceEvent* dev;
-        switch(xiev->evtype) {
-            case XI_RawMotion:
-            case XI_RawKeyPress:
-            case XI_RawKeyRelease:
-            case XI_RawButtonPress:
-            case XI_RawButtonRelease:
-                rev = static_cast<XIRawEvent*>(cookie->data);
-                /* Free allocated memory of XIRawEvent */
-                if (rev->raw_values)
-                    free(rev->raw_values);
-                if (rev->valuators.values)
-                    free(rev->valuators.values);
-                if (rev->valuators.mask)
-                    free(rev->valuators.mask);
-                break;
-            case XI_Motion:
-            case XI_KeyPress:
-            case XI_KeyRelease:
-            case XI_ButtonPress:
-            case XI_ButtonRelease:
-                dev = static_cast<XIDeviceEvent*>(cookie->data);
-                /* Free allocated memory of XIRawEvent */
-                if (dev->buttons.mask)
-                    free(dev->buttons.mask);
-                break;
-        }
-        free(cookie->data);
-    }
+    if (cookie)
+        xiCookieDataFree(cookie->data);
 }
 
 /* Show informations about an xevent */

@@ -23,8 +23,107 @@
 
 #include "logging.h"
 #include "inputs/inputs.h"
+#include "../external/X11/XInput2.h"
+
+#include <cstdlib>
+#include <cstring>
 
 namespace libtas {
+
+static void* memdup(const void* src, size_t size)
+{
+    if (!src)
+        return nullptr;
+    void* dst = malloc(size);
+    memcpy(dst, src, size);
+    return dst;
+}
+
+/* Number of valuators set in a valuator mask */
+static int valuatorCount(const XIValuatorState& valuators)
+{
+    if (!valuators.mask)
+        return 0;
+    int count = 0;
+    for (int i = 0; i < valuators.mask_len * 8; i++)
+        if (XIMaskIsSet(valuators.mask, i))
+            count++;
+    return count;
+}
+
+void* xiCookieDataCopy(const XGenericEventCookie* cookie)
+{
+    const XIEvent* xiev = static_cast<const XIEvent*>(cookie->data);
+    switch (xiev->evtype) {
+        case XI_RawMotion:
+        case XI_RawKeyPress:
+        case XI_RawKeyRelease:
+        case XI_RawButtonPress:
+        case XI_RawButtonRelease: {
+            XIRawEvent* rev = static_cast<XIRawEvent*>(memdup(cookie->data, sizeof(XIRawEvent)));
+            int count = valuatorCount(rev->valuators);
+            rev->raw_values = static_cast<double*>(memdup(rev->raw_values, count * sizeof(double)));
+            rev->valuators.values = static_cast<double*>(memdup(rev->valuators.values, count * sizeof(double)));
+            rev->valuators.mask = static_cast<unsigned char*>(memdup(rev->valuators.mask, rev->valuators.mask_len));
+            return rev;
+        }
+        case XI_Motion:
+        case XI_KeyPress:
+        case XI_KeyRelease:
+        case XI_ButtonPress:
+        case XI_ButtonRelease: {
+            /* Valuators are not owned by the event, only the button mask is */
+            XIDeviceEvent* dev = static_cast<XIDeviceEvent*>(memdup(cookie->data, sizeof(XIDeviceEvent)));
+            dev->buttons.mask = static_cast<unsigned char*>(memdup(dev->buttons.mask, dev->buttons.mask_len));
+            return dev;
+        }
+        case XI_Enter:
+        case XI_Leave:
+        case XI_FocusIn:
+        case XI_FocusOut:
+            return memdup(cookie->data, sizeof(XIEnterEvent));
+        default:
+            LOG(LL_ERROR, LCF_EVENTS, "Cannot copy XInput2 event of type %d, data will be shared", xiev->evtype);
+            return cookie->data;
+    }
+}
+
+void xiCookieDataFree(void* data)
+{
+    if (!data)
+        return;
+
+    XIEvent* xiev = static_cast<XIEvent*>(data);
+    XIRawEvent *rev;
+    XIDeviceEvent* dev;
+    switch(xiev->evtype) {
+        case XI_RawMotion:
+        case XI_RawKeyPress:
+        case XI_RawKeyRelease:
+        case XI_RawButtonPress:
+        case XI_RawButtonRelease:
+            rev = static_cast<XIRawEvent*>(data);
+            /* Free allocated memory of XIRawEvent */
+            if (rev->raw_values)
+                free(rev->raw_values);
+            if (rev->valuators.values)
+                free(rev->valuators.values);
+            if (rev->valuators.mask)
+                free(rev->valuators.mask);
+            break;
+        case XI_Motion:
+        case XI_KeyPress:
+        case XI_KeyRelease:
+        case XI_ButtonPress:
+        case XI_ButtonRelease:
+            dev = static_cast<XIDeviceEvent*>(data);
+            /* Free allocated memory of XIDeviceEvent */
+            if (dev->buttons.mask)
+                free(dev->buttons.mask);
+            break;
+    }
+    free(data);
+}
 
 XlibEventQueue::XlibEventQueue(Display* d) : display(d), sync_count(0), grab_window(0), grab_event_mask(0), grab_owner_events(false), focus_window(0) {}
 
@@ -113,6 +212,7 @@ int XlibEventQueue::insert(XEvent* event)
 
             /* Push the event at the beginning of the queue */
             eventQueue.push_front(*event);
+            ownCookieData(eventQueue.front());
 
             /* If grab was set with owner_events being False, only report to 
              * the grab window, or discard */
@@ -163,8 +263,17 @@ int XlibEventQueue::insert(XEvent* event)
 
     /* Push the event at the beginning of the queue */
     eventQueue.push_front(*event);
+    ownCookieData(eventQueue.front());
 
     return 1;
+}
+
+void XlibEventQueue::ownCookieData(XEvent& event)
+{
+    /* The same event may be inserted into several queues, and each consumer
+     * frees the cookie data, so each queue must store its own copy */
+    if ((event.type == GenericEvent) && event.xcookie.data)
+        event.xcookie.data = xiCookieDataCopy(&event.xcookie);
 }
 
 bool XlibEventQueue::pop(XEvent* event, bool update)

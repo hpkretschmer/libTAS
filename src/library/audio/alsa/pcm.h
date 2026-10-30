@@ -36,7 +36,7 @@ OVERRIDE int snd_pcm_open_fallback(snd_pcm_t **pcm, snd_config_t *root,
     			  snd_pcm_stream_t stream, int mode);
 
 OVERRIDE int snd_pcm_close(snd_pcm_t *pcm);
-    // const char *snd_pcm_name(snd_pcm_t *pcm);
+OVERRIDE const char *snd_pcm_name(snd_pcm_t *pcm);
     // snd_pcm_type_t snd_pcm_type(snd_pcm_t *pcm);
     // snd_pcm_stream_t snd_pcm_stream(snd_pcm_t *pcm);
 OVERRIDE int snd_pcm_poll_descriptors_count(snd_pcm_t *pcm);
@@ -59,7 +59,7 @@ OVERRIDE int snd_pcm_reset(snd_pcm_t *pcm);
 OVERRIDE int snd_pcm_status(snd_pcm_t *pcm, snd_pcm_status_t *status);
 OVERRIDE int snd_pcm_start(snd_pcm_t *pcm);
 OVERRIDE int snd_pcm_drop(snd_pcm_t *pcm);
-    // int snd_pcm_drain(snd_pcm_t *pcm);
+OVERRIDE int snd_pcm_drain(snd_pcm_t *pcm);
 OVERRIDE int snd_pcm_hw_params_can_pause(const snd_pcm_hw_params_t *params);
 OVERRIDE int snd_pcm_pause(snd_pcm_t *pcm, int enable);
 OVERRIDE snd_pcm_state_t snd_pcm_state(snd_pcm_t *pcm);

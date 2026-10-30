@@ -46,6 +46,19 @@ OVERRIDE Bool XShmPutImage(
     Bool        /* send_event */
 );
 
+OVERRIDE int XPutImage(
+    Display*        /* dpy */,
+    Drawable        /* d */,
+    GC          /* gc */,
+    XImage*     /* image */,
+    int         /* src_x */,
+    int         /* src_y */,
+    int         /* dst_x */,
+    int         /* dst_y */,
+    unsigned int    /* width */,
+    unsigned int    /* height */
+);
+
 }
 
 #endif

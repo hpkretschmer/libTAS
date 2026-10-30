@@ -65,6 +65,14 @@ Window XlibGameWindow::get()
     return gameXWindows.front();
 }
 
+bool XlibGameWindow::isGameWindow(Window w)
+{
+    for (Window gw : gameXWindows)
+        if (gw == w)
+            return true;
+    return false;
+}
+
 void XlibGameWindow::pop(Window w)
 {
     /* If current game window, switch to another one on the list */

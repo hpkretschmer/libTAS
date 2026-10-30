@@ -53,6 +53,7 @@ struct GameInfo {
         SDL3 = 0x100000,
         SDL3_RENDERER = 0x200000,
         SDL3_SURFACE = 0x400000,
+        XIMAGE = 0x800000,
     };
 
     int video = UNKNOWN;

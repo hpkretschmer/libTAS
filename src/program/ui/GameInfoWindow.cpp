@@ -69,6 +69,12 @@ void GameInfoWindow::update(GameInfo game_info)
     else if (game_info.video & GameInfo::VDPAU) {
         videoStr = "VDPAU";
     }
+    else if (game_info.video & GameInfo::XSHM) {
+        videoStr = "XShm";
+    }
+    else if (game_info.video & GameInfo::XIMAGE) {
+        videoStr = "XPutImage";
+    }
     else {
         videoStr = "unknown";
     }

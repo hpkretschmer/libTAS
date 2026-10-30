@@ -46,7 +46,7 @@ int ScreenCapture::init()
         if (Global::game_info.video & GameInfo::VDPAU) {
             impl = new ScreenCapture_VDPAU();
         }
-        else if (Global::game_info.video & GameInfo::XSHM) {
+        else if (Global::game_info.video & (GameInfo::XSHM | GameInfo::XIMAGE)) {
             impl = new ScreenCapture_XShm();
         }
         else if (Global::game_info.video & GameInfo::SDL3_RENDERER) {

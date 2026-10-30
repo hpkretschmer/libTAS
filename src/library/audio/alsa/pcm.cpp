@@ -258,6 +258,14 @@ int snd_pcm_start(snd_pcm_t *pcm)
     return 0;
 }
 
+const char *snd_pcm_name(snd_pcm_t *pcm)
+{
+    RETURN_IF_NATIVE(snd_pcm_name, (pcm), nullptr);
+
+    LOGTRACE_SIMPLE(LCF_SOUND);
+    return "default";
+}
+
 int snd_pcm_drop(snd_pcm_t *pcm)
 {
     RETURN_IF_NATIVE(snd_pcm_drop, (pcm), nullptr);
@@ -266,6 +274,20 @@ int snd_pcm_drop(snd_pcm_t *pcm)
     int sourceId = reinterpret_cast<intptr_t>(pcm);
     auto source = AudioContext::get().getSource(sourceId);
     source->setPosition(source->queueSize());
+    return 0;
+}
+
+int snd_pcm_drain(snd_pcm_t *pcm)
+{
+    RETURN_IF_NATIVE(snd_pcm_drain, (pcm), nullptr);
+
+    LOGTRACE_SIMPLE(LCF_SOUND);
+    /* We cannot block until the remaining samples are played, so we
+     * consider them played, like snd_pcm_drop() */
+    int sourceId = reinterpret_cast<intptr_t>(pcm);
+    auto source = AudioContext::get().getSource(sourceId);
+    if (source)
+        source->setPosition(source->queueSize());
     return 0;
 }
 
