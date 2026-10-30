@@ -86,6 +86,10 @@ xcb_create_window_aux (xcb_connection_t                     *c,
                        uint32_t                              value_mask,
                        const xcb_create_window_value_list_t *value_list);
 
+OVERRIDE xcb_void_cookie_t xcb_change_window_attributes_checked (xcb_connection_t *c, xcb_window_t window, uint32_t value_mask, const void *value_list);
+
+OVERRIDE xcb_void_cookie_t xcb_change_window_attributes (xcb_connection_t *c, xcb_window_t window, uint32_t value_mask, const void *value_list);
+
 OVERRIDE xcb_void_cookie_t xcb_destroy_window_checked (xcb_connection_t *c, xcb_window_t window);
 
 OVERRIDE xcb_void_cookie_t xcb_destroy_window (xcb_connection_t *c, xcb_window_t window);

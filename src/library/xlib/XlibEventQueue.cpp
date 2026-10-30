@@ -168,9 +168,14 @@ void XlibEventQueue::setMask(Window w, long event_mask)
 
 #define EVENTQUEUE_MAXLEN 1024
 
-int XlibEventQueue::insert(XEvent* event)
+int XlibEventQueue::insert(XEvent* original_event)
 {
     std::lock_guard<std::recursive_mutex> lock(mutex);
+
+    /* The same event may be inserted into several queues, and we modify its
+     * window below, so work on a copy */
+    XEvent event_copy = *original_event;
+    XEvent* event = &event_copy;
 
     /* Redirect events to the currently focused keyboard window, mirroring
      * XSetInputFocus semantics for the emulated event queue. */
@@ -188,6 +193,11 @@ int XlibEventQueue::insert(XEvent* event)
             event->xkey.window = focus_window;
         }
         event->xany.window = focus_window;
+    }
+
+    if (isCoreEventReplacedByXI(event)) {
+        LOG(LL_DEBUG, LCF_EVENTS | LCF_MOUSE, "Core event %d not sent because window %d selected the XInput2 event", event->type, event->xany.window);
+        return 0;
     }
 
     /* Check if pointer event and pointer is grabbed */
@@ -268,6 +278,36 @@ int XlibEventQueue::insert(XEvent* event)
     return 1;
 }
 
+void XlibEventQueue::addXIMask(Window w, const unsigned char* mask, int mask_len)
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+
+    unsigned long& types = xiEventTypes[w];
+    for (int t = 0; t < mask_len * 8 && t < static_cast<int>(sizeof(types) * 8); t++)
+        if (XIMaskIsSet(mask, t))
+            types |= 1UL << t;
+}
+
+bool XlibEventQueue::isCoreEventReplacedByXI(const XEvent* event)
+{
+    int xi_type;
+    switch (event->type) {
+        case KeyPress: xi_type = XI_KeyPress; break;
+        case KeyRelease: xi_type = XI_KeyRelease; break;
+        case ButtonPress: xi_type = XI_ButtonPress; break;
+        case ButtonRelease: xi_type = XI_ButtonRelease; break;
+        case MotionNotify: xi_type = XI_Motion; break;
+        case EnterNotify: xi_type = XI_Enter; break;
+        case LeaveNotify: xi_type = XI_Leave; break;
+        case FocusIn: xi_type = XI_FocusIn; break;
+        case FocusOut: xi_type = XI_FocusOut; break;
+        default: return false;
+    }
+
+    auto it = xiEventTypes.find(event->xany.window);
+    return (it != xiEventTypes.end()) && (it->second & (1UL << xi_type));
+}
+
 void XlibEventQueue::ownCookieData(XEvent& event)
 {
     /* The same event may be inserted into several queues, and each consumer
@@ -288,6 +328,11 @@ bool XlibEventQueue::pop(XEvent* event, bool update)
     memcpy(event, &ev, sizeof(XEvent));
     if (update) {
         eventQueue.pop_back();
+    }
+    else {
+        /* Like Xlib, a peeked event gets its own cookie data, because the
+         * caller may free it while the event stays in the queue */
+        ownCookieData(*event);
     }
     return true;
 }

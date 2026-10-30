@@ -23,6 +23,7 @@
 #include "logging.h"
 #include "global.h"
 #include "GlobalState.h"
+#include "xlib/XlibEventQueueList.h"
 
 #include <cstdlib>
 
@@ -35,6 +36,15 @@ int XISelectEvents(Display* dpy, Window win, XIEventMask *masks, int num_masks)
     RETURN_IF_NATIVE(XISelectEvents, (dpy, win, masks, num_masks), "libXi.so.6");
 
     LOGTRACE_SIMPLE(LCF_WINDOW);
+
+    /* Register the selected XInput2 events, so that we don't send the
+     * corresponding core events to that window, like the X server */
+    std::shared_ptr<XlibEventQueue> queue = xlibEventQueueList.getQueue(dpy);
+    if (queue && masks) {
+        for (int m = 0; m < num_masks; m++)
+            if (masks[m].mask)
+                queue->addXIMask(win, masks[m].mask, masks[m].mask_len);
+    }
 
     /* Only check if not using SDL */
     if (masks) {
@@ -54,7 +64,7 @@ int XISelectEvents(Display* dpy, Window win, XIEventMask *masks, int num_masks)
         if (!(Global::game_info.mouse & (GameInfo::SDL1 | GameInfo::SDL2))) {
             if (((masks->mask_len >= XIMaskLen(XI_Motion)) && XIMaskIsSet(masks->mask, XI_Motion)) ||
                 ((masks->mask_len >= XIMaskLen(XI_ButtonPress)) && XIMaskIsSet(masks->mask, XI_ButtonPress))) {
-                LOG(LL_DEBUG, LCF_MOUSE, "   selecting XI mouse events");
+                LOG(LL_DEBUG, LCF_MOUSE, "   selecting XI mouse events on window %d", win);
                 Global::game_info.mouse |= GameInfo::XIEVENTS;
                 Global::game_info.tosend = true;
             }

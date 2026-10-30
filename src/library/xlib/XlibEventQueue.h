@@ -44,6 +44,9 @@ class XlibEventQueue
         /* Set an event mask for a window */
         void setMask(Window w, long event_mask);
 
+        /* Add XInput2 event types selected for a window */
+        void addXIMask(Window w, const unsigned char* mask, int mask_len);
+
         /* Insert an event in the queue */
         int insert(XEvent* event);
 
@@ -99,6 +102,13 @@ class XlibEventQueue
 
         /* Event mask for each Window */
         std::map<Window, long> eventMasks;
+
+        /* XInput2 event types selected for each Window, as a bit field */
+        std::map<Window, unsigned long> xiEventTypes;
+
+        /* Does the window receive the XInput2 version of a core event?
+         * In that case, the X server does not send the core event. */
+        bool isCoreEventReplacedByXI(const XEvent* event);
 
         /* Does a type belong to an event mask?*/
         bool isTypeOfMask(int type, long event_mask);

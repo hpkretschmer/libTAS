@@ -26,6 +26,8 @@
 #include "logging.h"
 #include "screencapture/ScreenCapture.h"
 #include "xlib/XlibGameWindow.h"
+#include "xlib/XlibEventQueueList.h"
+#include "xlib/xdisplay.h" // x11::gameDisplays
 #include "global.h"
 #include "../shared/sockethelpers.h"
 #include "../shared/messages.h"
@@ -36,6 +38,8 @@ DEFINE_ORIG_POINTER(xcb_create_window_checked)
 DEFINE_ORIG_POINTER(xcb_create_window)
 DEFINE_ORIG_POINTER(xcb_create_window_aux_checked)
 DEFINE_ORIG_POINTER(xcb_create_window_aux)
+DEFINE_ORIG_POINTER(xcb_change_window_attributes_checked)
+DEFINE_ORIG_POINTER(xcb_change_window_attributes)
 DEFINE_ORIG_POINTER(xcb_destroy_window_checked)
 DEFINE_ORIG_POINTER(xcb_destroy_window)
 
@@ -238,6 +242,60 @@ xcb_create_window_aux (xcb_connection_t                     *c,
     }
 
     return ret;
+}
+
+/* Register the event mask from a window attribute value list, if present */
+static void setEventMaskFromValueList(xcb_connection_t *c, xcb_window_t window, uint32_t value_mask, const void *value_list)
+{
+    if (!(value_mask & XCB_CW_EVENT_MASK))
+        return;
+
+    /* Values are ordered by attribute bit, only for the attributes present */
+    const uint32_t *values = static_cast<const uint32_t*>(value_list);
+    int i = 0;
+    for (uint32_t k=1; k < XCB_CW_EVENT_MASK; k <<= 1) {
+        if (value_mask & k)
+            i++;
+    }
+    uint32_t event_mask = values[i];
+
+    std::shared_ptr<XcbEventQueue> queue = xcbEventQueueList.getQueue(c);
+    if (queue) {
+        /* Also propagates the mask to Xlib queues */
+        queue->setMask(window, event_mask);
+    }
+    else {
+        /* The connection may belong to an Xlib display (e.g. Chromium) */
+        for (int d=0; d<GAMEDISPLAYNUM; d++) {
+            if (x11::gameDisplays[d]) {
+                std::shared_ptr<XlibEventQueue> xqueue = xlibEventQueueList.getQueue(x11::gameDisplays[d]);
+                if (xqueue)
+                    xqueue->setMask(window, event_mask);
+            }
+        }
+    }
+}
+
+xcb_void_cookie_t xcb_change_window_attributes_checked (xcb_connection_t *c, xcb_window_t window, uint32_t value_mask, const void *value_list)
+{
+    LOGTRACE(LCF_WINDOW, "%s called with window %d", __func__, window);
+    LINK_NAMESPACE_GLOBAL(xcb_change_window_attributes_checked);
+
+    if (!GlobalState::isNative())
+        setEventMaskFromValueList(c, window, value_mask, value_list);
+
+    return orig::xcb_change_window_attributes_checked(c, window, value_mask, value_list);
+}
+
+xcb_void_cookie_t xcb_change_window_attributes (xcb_connection_t *c, xcb_window_t window, uint32_t value_mask, const void *value_list)
+{
+    LOGTRACE(LCF_WINDOW, "%s called with window %d", __func__, window);
+    LINK_NAMESPACE_GLOBAL(xcb_change_window_attributes);
+
+    if (!GlobalState::isNative())
+        setEventMaskFromValueList(c, window, value_mask, value_list);
+
+    return orig::xcb_change_window_attributes(c, window, value_mask, value_list);
 }
 
 xcb_void_cookie_t xcb_destroy_window_checked (xcb_connection_t *c, xcb_window_t window)
