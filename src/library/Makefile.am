@@ -11,6 +11,7 @@ libtas_so_SOURCES = \
     FPSMonitor.cpp \
     frame.cpp \
     GameHacks.cpp \
+    PageFrame.cpp \
     global.cpp \
     GlobalState.cpp \
     hook.cpp \

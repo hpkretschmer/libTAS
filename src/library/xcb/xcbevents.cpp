@@ -114,14 +114,15 @@ void pushNativeXcbEvents(xcb_connection_t *c)
                 Global::is_exiting = true;
             }
 
-            /* Catch a ping event */
+            /* Catch a ping event. Ignore replies, which are sent to the root
+             * window, otherwise we would answer our own reply forever. */
+            xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
             if ((client_event->type == x11_atom(WM_PROTOCOLS)) &&
-                (static_cast<Atom>(client_event->data.data32[0]) == x11_atom(_NET_WM_PING))) {
+                (static_cast<Atom>(client_event->data.data32[0]) == x11_atom(_NET_WM_PING)) &&
+                (client_event->window != screen->root)) {
 
                 LOG(LL_DEBUG, LCF_EVENTS | LCF_WINDOW, "Answering a ping message");
                 xcb_client_message_event_t reply = *client_event;
-                xcb_screen_iterator_t iter = xcb_setup_roots_iterator (xcb_get_setup (c));
-                xcb_screen_t* screen = iter.data;
                 reply.window = screen->root;
 
                 xcb_send_event(c, false, screen->root,

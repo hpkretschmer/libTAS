@@ -137,9 +137,12 @@ void pushNativeXlibEvents(Display *display)
                 Global::is_exiting = true;
             }
 
-            /* Catch a ping event */
+            /* Catch a ping event. Ignore replies, which are sent to the root
+             * window, otherwise we would answer our own reply forever if
+             * the game selects SubstructureNotify events on the root window. */
             if ((event.xclient.message_type == x11_atom(WM_PROTOCOLS)) &&
-                (static_cast<Atom>(event.xclient.data.l[0]) == x11_atom(_NET_WM_PING))) {
+                (static_cast<Atom>(event.xclient.data.l[0]) == x11_atom(_NET_WM_PING)) &&
+                (event.xclient.window != DefaultRootWindow(display))) {
 
                 LOG(LL_DEBUG, LCF_EVENTS | LCF_WINDOW, "Answering a ping message");
                 XEvent reply = event;

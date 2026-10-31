@@ -67,7 +67,11 @@ int urandom_create_fd()
     LOG(LL_DEBUG, LCF_FILEIO | LCF_RANDOM, "Open /dev/urandom");
 
     if (readfd == -1) {
-        std::pair<int, int> fds = FileHandleList::createPipe(O_NONBLOCK);
+        /* The read end is blocking, so that reading more than the pipe holds
+         * waits for the signal handler to fill it, instead of failing, which
+         * never happens with /dev/urandom (Chromium aborts on failure).
+         * The write end is always non-blocking. */
+        std::pair<int, int> fds = FileHandleList::createPipe(0);
         readfd = fds.first;
         writefd = fds.second;
 

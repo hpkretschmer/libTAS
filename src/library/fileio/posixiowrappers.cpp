@@ -27,6 +27,7 @@
 #include "Utils.h"
 #include "global.h"
 #include "GlobalState.h"
+#include "PageFrame.h"
 #ifdef __linux__
 #include "inputs/jsdev.h"
 #include "inputs/evdev.h"
@@ -436,6 +437,12 @@ int access(const char *name, int type) __THROW
 
     if (!name) {
         return orig::access(name, type);
+    }
+
+    /* Frame signal from a browser-based game */
+    if (strcmp(name, LIBTAS_PAGE_FRAME_PATH) == 0) {
+        PageFrame::signal();
+        return 0;
     }
 
     if (Global::shared_config.debug_state & SharedConfig::DEBUG_NATIVE_FILEIO)

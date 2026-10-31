@@ -18,6 +18,7 @@
  */
 
 #include "DeterministicTimer.h"
+#include "PageFrame.h"
 #include "NonDeterministicTimer.h"
 #include "logging.h"
 #include "Profiler.h"
@@ -200,7 +201,9 @@ void DeterministicTimer::addDelay(struct timespec delayTicks)
     /* We only allow the main thread to trigger a frame boundary! */
     bool mainT = ThreadManager::isMainThread();
 
-    if (mainT && !insideFrameBoundary) {
+    /* Browser-based games signaling their frames only end a frame with a page
+     * frame, and their main thread waits do not make a frame */
+    if (mainT && !insideFrameBoundary && !PageFrame::isEnabled()) {
         /* The threshold value to trigger a non-draw frame is critical for a 
          * number of games. Using a value too high will cause some games to
          * constantly trigger the time-tracking, or will get extra non-draw frames.

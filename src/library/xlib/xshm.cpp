@@ -27,6 +27,7 @@
 #include "frame.h"
 #include "renderhud/RenderHUD.h"
 #include "renderhud/RenderHUD_XImage.h"
+#include "PageFrame.h"
 #include "DeterministicTimer.h"
 #include "global.h"
 #include "../shared/sockethelpers.h"
@@ -129,6 +130,11 @@ OVERRIDE int XPutImage(
     XlibGameWindow::promote(d);
 
     ScreenCapture::resize(image->width, image->height);
+
+    /* For browser-based games signaling their frames, only end a frame if the
+     * page produced a new frame */
+    if (!PageFrame::shouldEndFrame())
+        return orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height);
 
     /* The image only contains the damaged area of the frame, so if a previous
      * draw was skipped (fast-forward), we must draw the whole image. */
