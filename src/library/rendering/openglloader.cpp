@@ -21,6 +21,8 @@
 
 #include "hook.h"
 
+#include <dlfcn.h>
+
 #define GL_GLEXT_PROTOTYPES
 #define GLX_GLXEXT_PROTOTYPES
 #ifdef __unix__
@@ -37,10 +39,26 @@ namespace libtas {
 
 struct GLProcs glProcs;
 
+/* Returns if a function pointer points inside libtas. A GL implementation that
+ * resolves its own functions with dlsym (e.g. Chromium's SwiftShader) gets our
+ * hooked functions, and storing them as the original ones would make them
+ * call themselves forever. */
+static bool isOwnFunction(void* ptr)
+{
+    Dl_info own, info;
+    if (!ptr || !dladdr(reinterpret_cast<void*>(gl_load_procs), &own) || !dladdr(ptr, &info))
+        return false;
+    return own.dli_fbase == info.dli_fbase;
+}
+
 #define GET_GL_POINTER(FUNC) \
-    glProcs.FUNC = reinterpret_cast<decltype(&gl##FUNC)>(proc("gl" #FUNC)); \
-    if (!glProcs.FUNC) \
-        link_function((void**)&glProcs.FUNC, "gl" #FUNC, "libGL.so");
+    { \
+        void* ptr = reinterpret_cast<void*>(proc("gl" #FUNC)); \
+        if (ptr && !isOwnFunction(ptr)) \
+            glProcs.FUNC = reinterpret_cast<decltype(&gl##FUNC)>(ptr); \
+        if (!glProcs.FUNC) \
+            link_function((void**)&glProcs.FUNC, "gl" #FUNC, "libGL.so"); \
+    }
 
 void gl_load_procs(GLGetProcAddressProc proc)
 {

@@ -186,6 +186,17 @@ __attribute__((noipa)) void *dlopen(const char *file, int mode) __THROW {
     {
 #ifdef __unix__
         if (file != nullptr && file[0] != '\0' && std::strchr(file, '/') == nullptr) {
+            /* Like the real dlopen, first look for an already loaded library
+             * with that name or soname, before searching the paths. Chromium's
+             * bundled SwiftShader relies on this to find its own libGLESv2.so
+             * instead of the system one. */
+            result = orig::dlopen(file, mode | RTLD_NOLOAD);
+            if (result != nullptr) {
+                LOG(LL_DEBUG, LCF_HOOK, "   Already loaded");
+            }
+        }
+
+        if (result == nullptr && file != nullptr && file[0] != '\0' && std::strchr(file, '/') == nullptr) {
             /* Path should be searched using search paths, so let's
              * manually check the paths in the correct order...
              */
