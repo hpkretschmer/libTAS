@@ -26,6 +26,7 @@
 #include "screencapture/ScreenCapture.h"
 #include "frame.h"
 #include "renderhud/RenderHUD.h"
+#include "renderhud/RenderHUD_XImage.h"
 #include "DeterministicTimer.h"
 #include "global.h"
 #include "../shared/sockethelpers.h"
@@ -136,10 +137,18 @@ OVERRIDE int XPutImage(
         full_redraw = true;
 
     /* Start the frame boundary and pass the function to draw */
-    static RenderHUD renderHUD;
+    static RenderHUD_XImage renderHUD;
+    renderHUD.setImage(image);
     int ret = 0;
     frameBoundary([&] () {
-        if (full_redraw) {
+        /* The HUD is drawn on a copy of the whole image */
+        XImage* hud_image = renderHUD.renderedImage();
+        if (hud_image) {
+            NATIVECALL(ret = orig::XPutImage(dpy, d, gc, hud_image, 0, 0, dst_x - src_x, dst_y - src_y, hud_image->width, hud_image->height));
+            /* Remove the HUD from the screen once it is not drawn anymore */
+            full_redraw = true;
+        }
+        else if (full_redraw) {
             NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, 0, 0, dst_x - src_x, dst_y - src_y, image->width, image->height));
             full_redraw = false;
         }
