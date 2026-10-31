@@ -36,6 +36,7 @@
 #include <sstream>
 #include <iomanip>
 #include <sys/wait.h> // waitpid
+#include <fcntl.h>
 
 namespace libtas {
 
@@ -91,6 +92,22 @@ void AVEncoder::init() {
             close(pipefd[1]);
             dup2(pipefd[0], STDIN_FILENO);
             close(pipefd[0]);
+
+            /* ffmpeg must keep stdout and stderr: otherwise its output file
+             * gets one of these descriptors, and ffmpeg writes its log into
+             * the video. The game may have them closed or close-on-exec
+             * (e.g. Chromium on a terminal). */
+            for (int fd = STDOUT_FILENO; fd <= STDERR_FILENO; fd++) {
+                int flags = fcntl(fd, F_GETFD);
+                if (flags == -1) {
+                    /* The lowest free descriptor is fd */
+                    open("/dev/null", O_WRONLY);
+                }
+                else if (flags & FD_CLOEXEC) {
+                    fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC);
+                }
+            }
+
             execlp("sh", "sh", "-c", commandline.str().c_str(), nullptr);
             _exit(127);
         }
