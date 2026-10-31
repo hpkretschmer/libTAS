@@ -42,6 +42,17 @@ namespace libtas {
  */
 void* link_function(void** function, const char* source, const char* library, const char *version = nullptr);
 
+#ifdef __linux__
+/* Load the first library of the list that exists, so that its symbols are
+ * resolved from itself and its dependencies before the global scope. Games
+ * may export their own version of a library's dependencies (e.g. NW.js exports
+ * an old FFmpeg from libffmpeg.so), which the library would otherwise use.
+ * Linking functions from this library afterwards uses the loaded library.
+ * @param[in]  libraries  nullptr-terminated list of library names
+ */
+void load_library_isolated(const char* const* libraries);
+#endif
+
 /* Some macros to make the above function easier to use */
 
 /* Declare the function pointer using decltype to deduce the

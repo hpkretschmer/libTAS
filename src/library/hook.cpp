@@ -146,4 +146,18 @@ void* link_function(void** function, const char* source, const char* library, co
     return nullptr;
 }
 
+#ifdef __linux__
+void load_library_isolated(const char* const* libraries)
+{
+    for (; *libraries; libraries++) {
+        void* handle;
+        NATIVECALL(handle = dlopen(*libraries, RTLD_LAZY | RTLD_DEEPBIND));
+        if (handle) {
+            LOG(LL_DEBUG, LCF_HOOK, "Loaded library %s isolated", *libraries);
+            return;
+        }
+    }
+}
+#endif
+
 }

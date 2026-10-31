@@ -47,6 +47,12 @@ ImageScalingSws::ImageScalingSws(void)
     /* Some systems don't create the unversionned symlinks when the libraries
      * are installed, so we add a link with the major version. */
 
+#ifdef __linux__
+    static const char* const libraries[] = {"libswscale.so", "libswscale.so.9",
+        "libswscale.so.8", "libswscale.so.7", "libswscale.so.6", nullptr};
+    load_library_isolated(libraries);
+#endif
+
     /* Disabling logging because we expect some of these to fail */
     {
         GlobalNoLog gnl;

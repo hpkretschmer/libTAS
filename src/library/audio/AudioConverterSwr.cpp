@@ -62,6 +62,13 @@ AudioConverterSwr::AudioConverterSwr(void)
     /* Some systems don't create the unversionned symlinks when the libraries
      * are installed, so we add a link with the major version. */
 
+#ifdef __linux__
+    static const char* const libraries[] = {"libswresample.so", "libswresample.so.6",
+        "libswresample.so.5", "libswresample.so.4", "libswresample.so.3",
+        "libswresample.so.2", nullptr};
+    load_library_isolated(libraries);
+#endif
+
     /* Disabling logging because we expect some of these to fail */
     {
         GlobalNoLog gnl;
