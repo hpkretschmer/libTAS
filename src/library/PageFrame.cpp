@@ -21,10 +21,13 @@
 
 #include "logging.h"
 #include "GlobalState.h"
+#include "inputs/inputs.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -50,12 +53,12 @@ static std::atomic<bool> enabled(enabledFromStart());
 /* True if the page signaled a frame that was not presented yet */
 static bool pending = false;
 
-void PageFrame::signal()
-{
-    /* Our own waits must not be handled as game waits */
-    GlobalNative gn;
-    std::unique_lock<std::mutex> lock(mutex);
+/* True from the present ending a frame until its frame boundary is done */
+static bool presenting = false;
 
+/* Wait until the frame boundary of the previous page frame is done */
+static void waitForPreviousFrame(std::unique_lock<std::mutex>& lock)
+{
     if (!enabled) {
         LOG(LL_INFO, LCF_WINDOW, "Page signaled a frame, presents now only end a frame after a page frame");
         enabled = true;
@@ -68,7 +71,41 @@ void PageFrame::signal()
             LOG(LL_WARN, LCF_WINDOW, "Page frame still not presented after %d s", s+1);
     }
 
+    /* Then wait for its frame boundary to be done, which takes as long as
+     * the game is paused, so that the new page frame does not run before the
+     * inputs of the frame boundary are set */
+    presented.wait(lock, []{return !presenting;});
+}
+
+void PageFrame::signal()
+{
+    /* Our own waits must not be handled as game waits */
+    GlobalNative gn;
+    std::unique_lock<std::mutex> lock(mutex);
+
+    waitForPreviousFrame(lock);
     pending = true;
+}
+
+int PageFrame::signalWithInputs(char* buf, int size)
+{
+    GlobalNative gn;
+    std::unique_lock<std::mutex> lock(mutex);
+
+    waitForPreviousFrame(lock);
+
+    /* Read the inputs before setting the page frame as pending, because
+     * a frame boundary may start right after */
+    const AllInputsFlat& ai = Inputs::game_ai;
+    int len = snprintf(buf, size, "%d %d %u %d", ai.pointer.x, ai.pointer.y, ai.pointer.mask, ai.pointer.wheel);
+    for (uint32_t key : ai.keyboard) {
+        if (!key || (len >= size))
+            break;
+        len += snprintf(buf + len, size - len, " %x", key);
+    }
+
+    pending = true;
+    return std::min(len, size);
 }
 
 bool PageFrame::shouldEndFrame()
@@ -83,8 +120,18 @@ bool PageFrame::shouldEndFrame()
         return false;
 
     pending = false;
+    presenting = true;
     presented.notify_all();
     return true;
+}
+
+void PageFrame::frameEnded()
+{
+    GlobalNative gn;
+    std::lock_guard<std::mutex> lock(mutex);
+
+    presenting = false;
+    presented.notify_all();
 }
 
 bool PageFrame::isEnabled()

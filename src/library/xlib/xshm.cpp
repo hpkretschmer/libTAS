@@ -163,6 +163,8 @@ OVERRIDE int XPutImage(
         }
     }, renderHUD);
 
+    PageFrame::frameEnded();
+
     return ret;
 }
 

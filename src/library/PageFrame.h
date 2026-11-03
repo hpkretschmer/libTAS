@@ -27,19 +27,35 @@
  * `fs.accessSync()`), and presents only end a frame when the page signaled
  * a new frame since the last frame boundary. Setting the environment variable
  * LIBTAS_PAGE_FRAMES=1 enables this from the start, otherwise it is enabled
- * by the first signal. */
+ * by the first signal.
+ *
+ * Calling readlink() on the same path (in NW.js: `fs.readlinkSync()`) also
+ * signals a frame, and returns the inputs of that frame as text:
+ * "<pointer x> <pointer y> <pointer button mask> <wheel> <keysym>...", with
+ * the button mask using SingleInput::POINTER_B* bits and the keysyms in hex.
+ * The page can apply these inputs itself at the start of its frame, instead
+ * of receiving input events from the browser at an undefined time. */
 #define LIBTAS_PAGE_FRAME_PATH "/libtas/page_frame"
 
 namespace libtas {
 
 namespace PageFrame
 {
-/* Called when the page signals a new frame. Waits until the previous page
- * frame was presented, so that each frame boundary contains one page frame. */
+/* Called when the page signals a new frame. Waits until the frame boundary
+ * of the previous page frame is done, so that each frame boundary contains
+ * one page frame, and the new page frame runs with the inputs of this frame
+ * boundary. */
 void signal();
+
+/* Same as signal(), and writes the inputs of the new page frame into buf
+ * as described above. Returns the length written, without null terminator. */
+int signalWithInputs(char* buf, int size);
 
 /* Returns if a present should end a frame, and consumes the page frame */
 bool shouldEndFrame();
+
+/* Called when the frame boundary of a present that ended a frame is done */
+void frameEnded();
 
 /* Returns if the game signals its frames, so that only presents of a page
  * frame end a frame */

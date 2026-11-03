@@ -33,6 +33,7 @@
 #include "inputs/evdev.h"
 #endif
 
+#include <algorithm>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -49,6 +50,7 @@ DEFINE_ORIG_POINTER(openat64)
 DEFINE_ORIG_POINTER(creat)
 DEFINE_ORIG_POINTER(creat64)
 DEFINE_ORIG_POINTER(access)
+DEFINE_ORIG_POINTER(readlink)
 DEFINE_ORIG_POINTER(dup)
 DEFINE_ORIG_POINTER(dup2)
 
@@ -474,6 +476,23 @@ int access(const char *name, int type) __THROW
     }
 
     return orig::access(name, type);
+}
+
+ssize_t readlink(const char *path, char *buf, size_t len) __THROW
+{
+    LINK_NAMESPACE_GLOBAL(readlink);
+
+    if (GlobalState::isNative())
+        return orig::readlink(path, buf, len);
+
+    LOGTRACE(LCF_FILEIO, "%s call with path %s", __func__, path?path:"<NULL>");
+
+    /* Frame signal from a browser-based game, which gets the frame inputs */
+    if (path && (strcmp(path, LIBTAS_PAGE_FRAME_PATH) == 0)) {
+        return PageFrame::signalWithInputs(buf, static_cast<int>(std::min<size_t>(len, 4096)));
+    }
+
+    return orig::readlink(path, buf, len);
 }
 
 static int stat_special(const char *path, struct stat *buf)
