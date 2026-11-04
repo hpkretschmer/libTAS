@@ -18,6 +18,7 @@
  */
 
 #include "dirwrappers.h"
+#include "CasePath.h"
 #include "SaveFile.h"
 #include "SaveFileList.h"
 
@@ -58,10 +59,10 @@ DIR *opendir (const char *name)
 {
     LINK_NAMESPACE_GLOBAL(opendir);
 
-    DIR *d = orig::opendir(name);
-
     if (GlobalState::isNative())
-        return d;
+        return orig::opendir(name);
+
+    DIR *d = CasePath::call(name, [&](const char* f) {return orig::opendir(f);});
 
     LOGTRACE(LCF_FILEIO, "%s call with dir %s", __func__, name);
 

@@ -18,6 +18,7 @@
  */
 
 #include "posixiowrappers.h"
+#include "CasePath.h"
 #include "SaveFileList.h"
 #include "SaveFile.h"
 #include "URandom.h"
@@ -51,6 +52,7 @@ DEFINE_ORIG_POINTER(creat)
 DEFINE_ORIG_POINTER(creat64)
 DEFINE_ORIG_POINTER(access)
 DEFINE_ORIG_POINTER(readlink)
+DEFINE_ORIG_POINTER(realpath)
 DEFINE_ORIG_POINTER(dup)
 DEFINE_ORIG_POINTER(dup2)
 
@@ -150,7 +152,7 @@ int open (const char *file, int oflag, ...)
     }
 
     else {
-        fd = orig::open(file, oflag, mode);
+        fd = CasePath::call(file, [&](const char* f) {return orig::open(f, oflag, mode);});
     }
 
     return fd;
@@ -246,7 +248,7 @@ int open64 (const char *file, int oflag, ...)
     }
 
     else {
-        fd = orig::open64(file, oflag, mode);
+        fd = CasePath::call(file, [&](const char* f) {return orig::open64(f, oflag, mode);});
     }
 
     return fd;
@@ -288,7 +290,7 @@ int openat (int dirfd, const char *file, int oflag, ...)
     }
 
     else {
-        fd = orig::openat(dirfd, file, oflag, mode);
+        fd = CasePath::callAt(dirfd, file, [&](const char* f) {return orig::openat(dirfd, f, oflag, mode);});
     }
 
     return fd;
@@ -330,7 +332,7 @@ int openat64 (int dirfd, const char *file, int oflag, ...)
     }
 
     else {
-        fd = orig::openat64(dirfd, file, oflag, mode);
+        fd = CasePath::callAt(dirfd, file, [&](const char* f) {return orig::openat64(dirfd, f, oflag, mode);});
     }
 
     return fd;
@@ -475,7 +477,7 @@ int access(const char *name, int type) __THROW
         return 0;
     }
 
-    return orig::access(name, type);
+    return CasePath::call(name, [&](const char* f) {return orig::access(f, type);});
 }
 
 ssize_t readlink(const char *path, char *buf, size_t len) __THROW
@@ -493,6 +495,18 @@ ssize_t readlink(const char *path, char *buf, size_t len) __THROW
     }
 
     return orig::readlink(path, buf, len);
+}
+
+char *realpath (const char *__restrict name, char *__restrict resolved) __THROW
+{
+    LINK_NAMESPACE_GLOBAL(realpath);
+
+    if (GlobalState::isNative())
+        return orig::realpath(name, resolved);
+
+    LOGTRACE(LCF_FILEIO, "%s call with name %s", __func__, name?name:"<NULL>");
+
+    return CasePath::call(name, [&](const char* f) {return orig::realpath(f, resolved);});
 }
 
 static int stat_special(const char *path, struct stat *buf)
@@ -571,7 +585,7 @@ int __xstat(int ver, const char *path, struct stat *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(__xstat, (ver, path, buf), nullptr);
+    RETURN_NATIVE_CASE(__xstat, path, (ver, path, buf));
 }
 
 int __xstat64(int ver, const char *path, struct stat64 *buf) __THROW
@@ -590,7 +604,7 @@ int __xstat64(int ver, const char *path, struct stat64 *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(__xstat64, (ver, path, buf), nullptr);
+    RETURN_NATIVE_CASE(__xstat64, path, (ver, path, buf));
 }
 
 int stat(const char *path, struct stat *buf) __THROW
@@ -609,7 +623,7 @@ int stat(const char *path, struct stat *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(stat, (path, buf), nullptr);
+    RETURN_NATIVE_CASE(stat, path, (path, buf));
 }
 
 int stat64(const char *path, struct stat64 *buf) __THROW
@@ -628,7 +642,7 @@ int stat64(const char *path, struct stat64 *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(stat64, (path, buf), nullptr);
+    RETURN_NATIVE_CASE(stat64, path, (path, buf));
 }
 
 int __lxstat(int ver, const char *path, struct stat *buf) __THROW
@@ -647,7 +661,7 @@ int __lxstat(int ver, const char *path, struct stat *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(__lxstat, (ver, path, buf), nullptr);
+    RETURN_NATIVE_CASE(__lxstat, path, (ver, path, buf));
 }
 
 int __lxstat64(int ver, const char *path, struct stat64 *buf) __THROW
@@ -667,7 +681,7 @@ int __lxstat64(int ver, const char *path, struct stat64 *buf) __THROW
         return ret;
 
 
-    RETURN_NATIVE(__lxstat64, (ver, path, buf), nullptr);
+    RETURN_NATIVE_CASE(__lxstat64, path, (ver, path, buf));
 }
 
 int lstat(const char *path, struct stat *buf) __THROW
@@ -686,7 +700,7 @@ int lstat(const char *path, struct stat *buf) __THROW
     if (ret <= 0)
         return ret;
 
-    RETURN_NATIVE(lstat, (path, buf), nullptr);
+    RETURN_NATIVE_CASE(lstat, path, (path, buf));
 }
 
 int lstat64(const char *path, struct stat64 *buf) __THROW
@@ -705,7 +719,7 @@ int lstat64(const char *path, struct stat64 *buf) __THROW
     if (ret <= 0)
         return ret;
     
-    RETURN_NATIVE(lstat64, (path, buf), nullptr);
+    RETURN_NATIVE_CASE(lstat64, path, (path, buf));
 }
 
 int __fxstat(int ver, int fd, struct stat *buf) __THROW

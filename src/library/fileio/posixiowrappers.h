@@ -57,6 +57,9 @@ OVERRIDE int access (const char *name, int type) __THROW;
 /* Read the target of a symbolic link */
 OVERRIDE ssize_t readlink (const char *path, char *buf, size_t len) __THROW;
 
+/* Return the canonical absolute name of file NAME */
+OVERRIDE char *realpath (const char *__restrict name, char *__restrict resolved) __THROW;
+
 /* Wrappers for stat functions */
 OVERRIDE int __xstat(int ver, const char *path, struct stat *buf) __THROW;
 OVERRIDE int __xstat64(int ver, const char *path, struct stat64 *buf) __THROW;

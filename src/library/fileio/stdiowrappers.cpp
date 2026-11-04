@@ -18,6 +18,7 @@
  */
 
 #include "stdiowrappers.h"
+#include "CasePath.h"
 #include "SaveFileList.h"
 #include "SaveFile.h"
 #ifdef __linux__
@@ -106,7 +107,7 @@ FILE *fopen (const char *filename, const char *modes)
     }
 
     else {
-        f = orig::fopen(filename, modes);
+        f = CasePath::call(filename, [&](const char* fn) {return orig::fopen(fn, modes);});
     }
 
     return f;
@@ -176,7 +177,7 @@ FILE *fopen64 (const char *filename, const char *modes)
     }
 
     else {
-        f = orig::fopen64(filename, modes);
+        f = CasePath::call(filename, [&](const char* fn) {return orig::fopen64(fn, modes);});
     }
 
     return f;

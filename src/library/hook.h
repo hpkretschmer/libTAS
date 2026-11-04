@@ -91,6 +91,15 @@ do { \
     return orig_##FUNC ARGS; \
 }
 
+/* Same as RETURN_NATIVE, but if PATH does not exist, retry with the path
+ * matching ignoring case (see fileio/CasePath.h, which must be included) */
+#define RETURN_NATIVE_CASE(FUNC, PATH, ARGS) \
+{ \
+    static decltype(&FUNC) orig_##FUNC; \
+    link_function((void**)&orig_##FUNC, #FUNC, nullptr); \
+    return CasePath::call(PATH, [&](const char* PATH) {return orig_##FUNC ARGS;}); \
+}
+
 
 #ifdef __unix__
 #define LINK_NAMESPACE(FUNC,LIB) link_function((void**)&orig::FUNC, #FUNC, "lib" LIB ".so")

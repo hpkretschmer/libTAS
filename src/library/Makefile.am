@@ -1,7 +1,7 @@
 if BUILD32LIBONLY
 bin_PROGRAMS =
 else
-bin_PROGRAMS = libtas.so
+bin_PROGRAMS = libtas.so libtas-casefold.so
 endif
 
 libtas_so_SOURCES = \
@@ -65,6 +65,7 @@ libtas_so_SOURCES = \
     fileio/FileDescriptorManip.cpp \
     fileio/FileHandleList.cpp \
     fileio/generaliowrappers.cpp \
+    fileio/CasePath.cpp \
     fileio/posixiowrappers.cpp \
     fileio/SaveFile.cpp \
     fileio/SaveFileList.cpp \
@@ -254,6 +255,13 @@ libtas_so_CXXFLAGS = $(LIBSWRESAMPLE_CFLAGS) -fPIC -shared -rdynamic -fno-stack-
 libtas_so_CXXFLAGS += -DLIBTAS_LIBRARY
 libtas_so_LDFLAGS = -shared
 libtas_so_LDADD = $(LIBRARY_LIBS)
+
+# Case-insensitive paths of libTAS as a standalone library, to run games
+# without libTAS (see fileio/CasePath.h)
+libtas_casefold_so_SOURCES = casefold/casefold.cpp fileio/CasePath.cpp
+libtas_casefold_so_CXXFLAGS = -fPIC -shared -fvisibility=hidden
+libtas_casefold_so_LDFLAGS = -shared
+libtas_casefold_so_LDADD = -ldl
 
 if BUILD32LIB
 bin_PROGRAMS += libtas32.so
