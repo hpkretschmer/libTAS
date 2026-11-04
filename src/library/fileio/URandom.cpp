@@ -25,6 +25,7 @@
 #include "GlobalState.h"
 #include "Utils.h"
 
+#include <atomic>
 #include <fcntl.h>
 #include <unistd.h> // getpid()
 #include <signal.h>
@@ -34,21 +35,28 @@ namespace libtas {
 static int readfd = -1;
 static int writefd = -1;
 static FILE* stream = nullptr;
-static uint64_t prng_state = 0;
+
+/* Values are generated concurrently, e.g. by the signal handler filling the
+ * pipe running on several threads at once, so the state is updated
+ * atomically, so that each value is only returned once. Otherwise, the game
+ * gets duplicated random values (e.g. Chromium gets duplicated ids). */
+static std::atomic<uint64_t> prng_state(0);
 
 uint64_t urandom_rand()
 {
-    if (!prng_state)
-        prng_state = Global::shared_config.initial_time_sec;
-    
-    /* Use xorshift64* algorithm to generate pseudo-random values */
-    uint64_t r = prng_state;	/* The state must be seeded with a nonzero value. */
-    r ^= r >> 12;
-    r ^= r << 25;
-    r ^= r >> 27;
-    prng_state = r;
-    r *= 0x2545F4914F6CDD1DULL;
-    return r;
+    uint64_t state = prng_state.load();
+    uint64_t r;
+    do {
+        /* The state must be seeded with a nonzero value. */
+        r = state ? state : Global::shared_config.initial_time_sec;
+
+        /* Use xorshift64* algorithm to generate pseudo-random values */
+        r ^= r >> 12;
+        r ^= r << 25;
+        r ^= r >> 27;
+    } while (!prng_state.compare_exchange_weak(state, r));
+
+    return r * 0x2545F4914F6CDD1DULL;
 }
 
 static void urandom_handler(int signum)
