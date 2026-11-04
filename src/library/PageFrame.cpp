@@ -20,6 +20,7 @@
 #include "PageFrame.h"
 
 #include "logging.h"
+#include "global.h" // Global::shared_config
 #include "GlobalState.h"
 #include "inputs/inputs.h"
 
@@ -98,6 +99,17 @@ int PageFrame::signalWithInputs(char* buf, int size)
      * a frame boundary may start right after */
     const AllInputsFlat& ai = Inputs::game_ai;
     int len = snprintf(buf, size, "%d %d %u %d", ai.pointer.x, ai.pointer.y, ai.pointer.mask, ai.pointer.wheel);
+
+    /* The framerate of this frame, as the deterministic timer uses it */
+    uint32_t framerate_num = Inputs::ai.misc.framerate_num;
+    uint32_t framerate_den = Inputs::ai.misc.framerate_den;
+    if (!framerate_num)
+        framerate_num = Global::shared_config.initial_framerate_num;
+    if (!framerate_den)
+        framerate_den = Global::shared_config.initial_framerate_den;
+    if (len < size)
+        len += snprintf(buf + len, size - len, " r%u/%u", framerate_num, framerate_den);
+
     for (uint32_t key : ai.keyboard) {
         if (!key || (len >= size))
             break;

@@ -31,10 +31,12 @@
  *
  * Calling readlink() on the same path (in NW.js: `fs.readlinkSync()`) also
  * signals a frame, and returns the inputs of that frame as text:
- * "<pointer x> <pointer y> <pointer button mask> <wheel> <keysym>...", with
- * the button mask using SingleInput::POINTER_B* bits and the keysyms in hex.
+ * "<pointer x> <pointer y> <pointer button mask> <wheel> r<num>/<den>
+ * <keysym>...", with the button mask using SingleInput::POINTER_B* bits,
+ * the framerate of the frame as num/den, and the keysyms in hex.
  * The page can apply these inputs itself at the start of its frame, instead
- * of receiving input events from the browser at an undefined time. */
+ * of receiving input events from the browser at an undefined time, and
+ * advance its clock by one frame duration. */
 #define LIBTAS_PAGE_FRAME_PATH "/libtas/page_frame"
 
 namespace libtas {
