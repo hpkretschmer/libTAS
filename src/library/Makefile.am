@@ -12,6 +12,7 @@ libtas_so_SOURCES = \
     frame.cpp \
     GameHacks.cpp \
     PageFrame.cpp \
+    PageScript.cpp \
     global.cpp \
     GlobalState.cpp \
     hook.cpp \
@@ -250,6 +251,14 @@ libtas_so_SOURCES = \
     ../external/imgui/imgui_impl_xlib.cpp \
     ../external/imgui/implot_items.cpp \
     ../external/imgui/implot.cpp
+
+# The page script of browser-based games, built into the library as a raw
+# string literal (see PageScript.h)
+BUILT_SOURCES = PageScriptSource.inc
+CLEANFILES = PageScriptSource.inc
+EXTRA_DIST = web/libtas_web.js
+PageScriptSource.inc: $(srcdir)/web/libtas_web.js
+	{ printf 'R"LIBTASWEBJS('; cat $(srcdir)/web/libtas_web.js; printf ')LIBTASWEBJS"\n'; } > $@
 
 libtas_so_CXXFLAGS = $(LIBSWRESAMPLE_CFLAGS) -fPIC -shared -rdynamic -fno-stack-protector -fvisibility=hidden
 libtas_so_CXXFLAGS += -DLIBTAS_LIBRARY

@@ -38,7 +38,7 @@ In `src/program/ui/settings/RuntimePane.h` and `.cpp`, follow `writingBox` (the 
 1. Declare two `ToolTipCheckBox*` members, e.g. `pageFramesBox` and `caseInsensitiveBox`.
 2. Create them (`new ToolTipCheckBox(tr("..."))`), e.g. "Browser game frames (NW.js)" and "Case-insensitive file names", and add them to a layout of the pane.
 3. Connect `clicked` to `RuntimePane::saveConfig`.
-4. Write a description with `setDescription(...)`, explaining when to use them (games on NW.js with `libtas_web.js`; games made for Windows that access files with the wrong case).
+4. Write a description with `setDescription(...)`, explaining when to use them (games on NW.js, into which libTAS then injects its page script `libtas_web.js`; games made for Windows that access files with the wrong case).
 5. In `loadConfig()`, `setChecked(context->config.sc.page_frames)` (and the other one); in `saveConfig()`, store `isChecked()` back.
 
 Both only take effect when the game starts. Check how the pane handles other options that can't change while the game is running (look for `setEnabled` depending on `context->status` in the settings panes), and do the same.
@@ -65,5 +65,5 @@ Both settings change how a movie plays back (page frames change what a frame is)
 ## 7. Test
 
 1. Build, start the libTAS GUI, toggle both checkboxes, close it, and check that `~/.config/libTAS/<game>.ini` contains `page_frames` and `case_insensitive_paths`.
-2. Remove the environment variables from the game's executable options (if they were removed in step 4), enable the checkboxes, and run an NW.js game with `libtas_web.js` (e.g. OMORI, see the Omori-libTAS-sync guide): the frame counter only advances with the game's frames, and the game finds files with the wrong case.
+2. Remove the environment variables from the game's executable options (if they were removed in step 4), enable the checkboxes, and run an NW.js game (e.g. OMORI, see the Omori-libTAS-sync guide): the frame counter only advances with the game's frames, and the game finds files with the wrong case.
 3. Record a short movie, check that its `config.ini` contains both keys, and play it back.

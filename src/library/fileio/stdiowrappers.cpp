@@ -28,9 +28,11 @@
 #include "logging.h"
 #include "hook.h"
 #include "GlobalState.h"
+#include "PageScript.h"
 #include "global.h"
 
 #include <cerrno>
+#include <fcntl.h>
 
 
 namespace libtas {
@@ -60,6 +62,15 @@ FILE *fopen (const char *filename, const char *modes)
         return orig::fopen(filename, modes);
 
     FILE* f = nullptr;
+
+    /* Manifest and injected script of browser-based games */
+    if (modes && (modes[0] == 'r') && !strchr(modes, '+')) {
+        int fd = PageScript::open(filename, O_RDONLY);
+        if (fd == -1)
+            return nullptr;
+        if (fd != PageScript::NOT_HANDLED)
+            return fdopen(fd, "r");
+    }
 
 #ifdef __linux__
     if ((strcmp(filename, "/dev/urandom") == 0) || (strcmp(filename, "/dev/random") == 0)) {
@@ -130,6 +141,15 @@ FILE *fopen64 (const char *filename, const char *modes)
         return orig::fopen64(filename, modes);
 
     FILE* f = nullptr;
+
+    /* Manifest and injected script of browser-based games */
+    if (modes && (modes[0] == 'r') && !strchr(modes, '+')) {
+        int fd = PageScript::open(filename, O_RDONLY);
+        if (fd == -1)
+            return nullptr;
+        if (fd != PageScript::NOT_HANDLED)
+            return fdopen(fd, "r");
+    }
 
 #ifdef __linux__
     if ((strcmp(filename, "/dev/urandom") == 0) || (strcmp(filename, "/dev/random") == 0)) {

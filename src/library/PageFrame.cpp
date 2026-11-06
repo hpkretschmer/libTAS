@@ -150,18 +150,9 @@ static void setPending()
     endRequested = false;
 }
 
-void PageFrame::signal()
-{
-    /* Our own waits must not be handled as game waits */
-    GlobalNative gn;
-    std::unique_lock<std::mutex> lock(mutex);
-
-    waitForPreviousFrame(lock);
-    setPending();
-}
-
 int PageFrame::signalWithInputs(char* buf, int size)
 {
+    /* Our own waits must not be handled as game waits */
     GlobalNative gn;
     std::unique_lock<std::mutex> lock(mutex);
 

@@ -22,15 +22,15 @@
 
 /* Browser-based games (e.g. NW.js) present more images than they produce
  * game frames, because the browser compositor can present without a new frame
- * from the page, depending on timing. To be deterministic, such a game can
- * signal each of its frames by calling access() on the path below (in NW.js:
- * `fs.accessSync()`), and presents only end a frame when the page signaled
+ * from the page, depending on timing. To be deterministic, the page signals
+ * each of its frames by calling readlink() on the path below (in NW.js:
+ * `fs.readlinkSync()`), and presents only end a frame when the page signaled
  * a new frame since the last frame boundary. Setting the environment variable
  * LIBTAS_PAGE_FRAMES=1 enables this from the start, otherwise it is enabled
- * by the first signal.
+ * by the first signal. libTAS injects the script that does this into NW.js
+ * games (see PageScript.h).
  *
- * Calling readlink() on the same path (in NW.js: `fs.readlinkSync()`) also
- * signals a frame, and returns the inputs of that frame as text:
+ * The signal returns the inputs of that frame as text:
  * "<pointer x> <pointer y> <pointer button mask> <wheel> r<num>/<den> [s]
  * <keysym>...", with the button mask using SingleInput::POINTER_B* bits,
  * the framerate of the frame as num/den, "s" if the frame skips its draw
@@ -59,11 +59,8 @@ namespace PageFrame
 /* Called when the page signals a new frame. Waits until the frame boundary
  * of the previous page frame is done, so that each frame boundary contains
  * one page frame, and the new page frame runs with the inputs of this frame
- * boundary. */
-void signal();
-
-/* Same as signal(), and writes the inputs of the new page frame into buf
- * as described above. Returns the length written, without null terminator. */
+ * boundary. Writes the inputs of the new page frame into buf as described
+ * above. Returns the length written, without null terminator. */
 int signalWithInputs(char* buf, int size);
 
 /* Called when the page ends its frame, with if it drew on screen. From then

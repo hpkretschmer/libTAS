@@ -29,6 +29,7 @@
 #include "global.h"
 #include "GlobalState.h"
 #include "PageFrame.h"
+#include "PageScript.h"
 #ifdef __linux__
 #include "inputs/jsdev.h"
 #include "inputs/evdev.h"
@@ -93,6 +94,11 @@ int open (const char *file, int oflag, ...)
         return orig::open(file, oflag, mode);
 
     int fd = 0;
+
+    /* Manifest and injected script of browser-based games */
+    fd = PageScript::open(file, oflag);
+    if (fd != PageScript::NOT_HANDLED)
+        return fd;
 
 #ifdef __linux__
     if ((strcmp(file, "/dev/urandom") == 0) || (strcmp(file, "/dev/random") == 0)) {
@@ -190,6 +196,11 @@ int open64 (const char *file, int oflag, ...)
 
     int fd = 0;
 
+    /* Manifest and injected script of browser-based games */
+    fd = PageScript::open(file, oflag);
+    if (fd != PageScript::NOT_HANDLED)
+        return fd;
+
 #ifdef __linux__
     if ((strcmp(file, "/dev/urandom") == 0) || (strcmp(file, "/dev/random") == 0)) {
         return urandom_create_fd();
@@ -285,6 +296,13 @@ int openat (int dirfd, const char *file, int oflag, ...)
 
     int fd = 0;
 
+    /* Manifest and injected script of browser-based games */
+    if ((dirfd == AT_FDCWD) || (file[0] == '/')) {
+        fd = PageScript::open(file, oflag);
+        if (fd != PageScript::NOT_HANDLED)
+            return fd;
+    }
+
     if (!GlobalState::isOwnCode() && SaveFileList::isSaveFile(file, oflag)) {
         fd = SaveFileList::openSaveFile(file, oflag);
     }
@@ -326,6 +344,13 @@ int openat64 (int dirfd, const char *file, int oflag, ...)
         return orig::openat64(dirfd, file, oflag, mode);
 
     int fd = 0;
+
+    /* Manifest and injected script of browser-based games */
+    if ((dirfd == AT_FDCWD) || (file[0] == '/')) {
+        fd = PageScript::open(file, oflag);
+        if (fd != PageScript::NOT_HANDLED)
+            return fd;
+    }
 
     if (!GlobalState::isOwnCode() && SaveFileList::isSaveFile(file, oflag)) {
         fd = SaveFileList::openSaveFile(file, oflag);
@@ -441,12 +466,6 @@ int access(const char *name, int type) __THROW
 
     if (!name) {
         return orig::access(name, type);
-    }
-
-    /* Frame signal from a browser-based game */
-    if (strcmp(name, LIBTAS_PAGE_FRAME_PATH) == 0) {
-        PageFrame::signal();
-        return 0;
     }
 
     /* End of a frame of a browser-based game */
