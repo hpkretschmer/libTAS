@@ -449,6 +449,16 @@ int access(const char *name, int type) __THROW
         return 0;
     }
 
+    /* End of a frame of a browser-based game */
+    if (strcmp(name, LIBTAS_PAGE_FRAME_END_PATH) == 0) {
+        PageFrame::endFrame(true);
+        return 0;
+    }
+    if (strcmp(name, LIBTAS_PAGE_FRAME_END_NODRAW_PATH) == 0) {
+        PageFrame::endFrame(false);
+        return 0;
+    }
+
     if (Global::shared_config.debug_state & SharedConfig::DEBUG_NATIVE_FILEIO)
         return orig::access(name, type);
 

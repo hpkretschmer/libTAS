@@ -31,13 +31,26 @@
  *
  * Calling readlink() on the same path (in NW.js: `fs.readlinkSync()`) also
  * signals a frame, and returns the inputs of that frame as text:
- * "<pointer x> <pointer y> <pointer button mask> <wheel> r<num>/<den>
+ * "<pointer x> <pointer y> <pointer button mask> <wheel> r<num>/<den> [s]
  * <keysym>...", with the button mask using SingleInput::POINTER_B* bits,
- * the framerate of the frame as num/den, and the keysyms in hex.
+ * the framerate of the frame as num/den, "s" if the frame skips its draw
+ * (see below), and the keysyms in hex.
  * The page can apply these inputs itself at the start of its frame, instead
  * of receiving input events from the browser at an undefined time, and
  * advance its clock by one frame duration. */
 #define LIBTAS_PAGE_FRAME_PATH "/libtas/page_frame"
+
+/* When libTAS skips drawing a frame (fast-forward), it adds " s" after the
+ * framerate, and the page may then not draw on screen.
+ *
+ * The page can signal the end of each frame by calling access() on one of
+ * the paths below, depending on if it drew on screen in the frame (or would
+ * have, if the frame skips its draw). Then the frame ends after that signal:
+ * at the next present if it drew, otherwise without waiting for a present,
+ * and frames that did not draw are non-draw frames. Pages that never signal
+ * the end of a frame keep ending each frame with a present. */
+#define LIBTAS_PAGE_FRAME_END_PATH "/libtas/page_frame_end"
+#define LIBTAS_PAGE_FRAME_END_NODRAW_PATH "/libtas/page_frame_end_nodraw"
 
 namespace libtas {
 
@@ -52,6 +65,16 @@ void signal();
 /* Same as signal(), and writes the inputs of the new page frame into buf
  * as described above. Returns the length written, without null terminator. */
 int signalWithInputs(char* buf, int size);
+
+/* Called when the page ends its frame, with if it drew on screen. From then
+ * on, frames only end after the page ended them. */
+void endFrame(bool drew);
+
+/* Called by the main thread when it waits. Ends the page frame that the page
+ * ended if it does not wait for a present (it skips its draw or did not
+ * draw), and returns if it did. Frame boundaries stay on the main thread,
+ * which presents the other frames. */
+bool endRequestedFrame();
 
 /* Returns if a present should end a frame, and consumes the page frame */
 bool shouldEndFrame();

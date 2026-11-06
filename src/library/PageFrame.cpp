@@ -20,8 +20,10 @@
 #include "PageFrame.h"
 
 #include "logging.h"
-#include "global.h" // Global::shared_config
+#include "global.h" // Global::shared_config, Global::skipping_draw
 #include "GlobalState.h"
+#include "frame.h"
+#include "renderhud/RenderHUD.h"
 #include "inputs/inputs.h"
 
 #include <algorithm>
@@ -31,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <mutex>
 
 namespace libtas {
@@ -51,8 +54,15 @@ static bool enabledFromStart()
  * keep ending a frame on each present */
 static std::atomic<bool> enabled(enabledFromStart());
 
-/* True if the page signaled a frame that was not presented yet */
+/* True if the page signaled a frame that did not end yet */
 static bool pending = false;
+
+/* True if that frame skips its draw (fast-forward) */
+static bool pendingSkip = false;
+
+/* True once the page signaled the end of a frame, so that frames only end
+ * after the page ended them */
+static std::atomic<bool> pageEndsFrames(false);
 
 /* True from the present ending a frame until its frame boundary is done */
 static bool presenting = false;
@@ -65,10 +75,15 @@ static void waitForPreviousFrame(std::unique_lock<std::mutex>& lock)
         enabled = true;
     }
 
+    /* When the game exits, frames don't end anymore, e.g. the main thread
+     * which ends frames that skip their draw waits for the page to exit */
+    if (Global::is_exiting)
+        return;
+
     /* Wait for the previous page frame to be presented, so that a frame
      * boundary never contains two page frames */
-    for (int s = 0; pending && (s < 10); s++) {
-        if (!presented.wait_for(lock, std::chrono::seconds(1), []{return !pending;}))
+    for (int s = 0; pending && !Global::is_exiting && (s < 10); s++) {
+        if (!presented.wait_for(lock, std::chrono::seconds(1), []{return !pending || Global::is_exiting;}))
             LOG(LL_WARN, LCF_WINDOW, "Page frame still not presented after %d s", s+1);
     }
 
@@ -78,6 +93,63 @@ static void waitForPreviousFrame(std::unique_lock<std::mutex>& lock)
     presented.wait(lock, []{return !presenting;});
 }
 
+/* True if the page ended its frame, and the frame boundary did not start
+ * yet, and if the page drew on screen in that frame */
+static bool endRequested = false;
+static bool endDrew = false;
+
+void PageFrame::endFrame(bool drew)
+{
+    GlobalNative gn;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!pageEndsFrames) {
+        LOG(LL_INFO, LCF_WINDOW, "Page signals the end of its frames");
+        pageEndsFrames = true;
+    }
+    if (pending) {
+        endRequested = true;
+        endDrew = drew;
+    }
+}
+
+bool PageFrame::endRequestedFrame()
+{
+    bool drew;
+    {
+        GlobalNative gn;
+        std::lock_guard<std::mutex> lock(mutex);
+
+        /* Frames that drew and don't skip their draw end with their present */
+        if (!endRequested || (endDrew && !pendingSkip))
+            return false;
+        drew = endDrew;
+        endRequested = false;
+        pending = false;
+        pendingSkip = false;
+        presenting = true;
+    }
+
+    /* A frame in which the page did not draw is a non-draw frame. A frame
+     * that skips its draw is a draw frame (that skips its draw), without
+     * anything to draw. */
+    static RenderHUD dummy;
+    if (drew)
+        frameBoundary([] () {}, dummy);
+    else
+        frameBoundary(std::function<void()>(), dummy);
+
+    frameEnded();
+    return true;
+}
+
+/* Set the new page frame as pending */
+static void setPending()
+{
+    pending = true;
+    pendingSkip = Global::skipping_draw;
+    endRequested = false;
+}
+
 void PageFrame::signal()
 {
     /* Our own waits must not be handled as game waits */
@@ -85,7 +157,7 @@ void PageFrame::signal()
     std::unique_lock<std::mutex> lock(mutex);
 
     waitForPreviousFrame(lock);
-    pending = true;
+    setPending();
 }
 
 int PageFrame::signalWithInputs(char* buf, int size)
@@ -110,13 +182,17 @@ int PageFrame::signalWithInputs(char* buf, int size)
     if (len < size)
         len += snprintf(buf + len, size - len, " r%u/%u", framerate_num, framerate_den);
 
+    /* If this frame skips its draw */
+    if (Global::skipping_draw && (len < size))
+        len += snprintf(buf + len, size - len, " s");
+
     for (uint32_t key : ai.keyboard) {
         if (!key || (len >= size))
             break;
         len += snprintf(buf + len, size - len, " %x", key);
     }
 
-    pending = true;
+    setPending();
     return std::min(len, size);
 }
 
@@ -131,7 +207,15 @@ bool PageFrame::shouldEndFrame()
     if (!pending)
         return false;
 
+    /* Once the page signals the end of its frames, a present only ends a
+     * frame after its end, and only if the page drew in it. The other frames
+     * end in endRequestedFrame(). */
+    if (pageEndsFrames && (!endRequested || !endDrew))
+        return false;
+
     pending = false;
+    pendingSkip = false;
+    endRequested = false;
     presenting = true;
     presented.notify_all();
     return true;

@@ -27,6 +27,7 @@
 #include "GlobalState.h"
 #include "hook.h"
 #include "global.h"
+#include "PageFrame.h"
 #ifdef __linux__
 #include "audio/alsa/pcm.h"
 #endif
@@ -89,7 +90,26 @@ DEFINE_ORIG_POINTER(epoll_wait)
     }
 #endif
     
-    int ret = orig::poll(fds, nfds, timeout);
+    /* A browser-based game ends its frames that skip their draw or did not
+     * draw itself, and their frame boundary runs on the main thread, which
+     * waits here between its tasks. Wait in short steps to run it soon, and return afterwards,
+     * so that the browser sees the new time. Only in the wait of the main
+     * loop, which polls several fds: Xlib waits for the X server with only
+     * its connection, while it holds the display lock that the frame boundary
+     * needs. */
+    int ret;
+    if ((timeout != 0) && (nfds > 1) && PageFrame::isEnabled() && ThreadManager::isMainThread()) {
+        for (int waited = 0; (timeout < 0) || (waited < timeout); waited++) {
+            if (PageFrame::endRequestedFrame())
+                return 0;
+            ret = orig::poll(fds, nfds, 1);
+            if (ret != 0)
+                return ret;
+        }
+    }
+    else {
+        ret = orig::poll(fds, nfds, timeout);
+    }
 
     /* If timeout on main thread, add the timeout amount to the timer */
     if (ret == 0 && timeout > 0) {
