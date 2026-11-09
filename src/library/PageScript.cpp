@@ -21,6 +21,7 @@
 
 #include "logging.h"
 #include "GlobalState.h"
+#include "global.h" // Global::shared_config
 #include "Utils.h"
 
 #include <climits>
@@ -119,6 +120,57 @@ static int memoryFile(const char* name, const std::string& content)
     return fd;
 }
 
+/* Adds `member` as the first member of the manifest object, returns false if
+ * the manifest has no object */
+static bool insertMember(std::string& manifest, const std::string& member)
+{
+    size_t brace = manifest.find('{');
+    if (brace == std::string::npos)
+        return false;
+    size_t next = manifest.find_first_not_of(" \t\r\n", brace + 1);
+    bool empty = (next != std::string::npos) && (manifest[next] == '}');
+    manifest.insert(brace + 1, empty ? member : (member + ","));
+    return true;
+}
+
+/* Seed of Math.random, from the initial time. V8 (`--random-seed`) needs a
+ * nonzero int. */
+static int randomSeed()
+{
+    const int64_t max = 2147483647;
+    int64_t seed = ((Global::shared_config.initial_time_sec % max) + max) % max;
+    return seed ? static_cast<int>(seed) : static_cast<int>(max);
+}
+
+/* Adds `flag` to the V8 flags of the manifest ("js-flags"), returns false if
+ * the manifest could not be changed */
+static bool addJsFlag(std::string& manifest, const std::string& flag)
+{
+    static const char key[] = "\"js-flags\"";
+    size_t pos = manifest.find(key);
+    if (pos == std::string::npos)
+        return insertMember(manifest, std::string(key) + ": \"" + flag + "\"");
+
+    /* Add the flag at the end of the string value */
+    size_t colon = manifest.find_first_not_of(" \t\r\n", pos + sizeof(key) - 1);
+    if ((colon == std::string::npos) || (manifest[colon] != ':'))
+        return false;
+    size_t quote = manifest.find_first_not_of(" \t\r\n", colon + 1);
+    if ((quote == std::string::npos) || (manifest[quote] != '"'))
+        return false;
+    size_t end = quote + 1;
+    while ((end < manifest.size()) && (manifest[end] != '"')) {
+        if (manifest[end] == '\\')
+            end++;
+        end++;
+    }
+    if (end >= manifest.size())
+        return false;
+    bool empty = manifest.find_first_not_of(" ", quote + 1) == end;
+    manifest.insert(end, empty ? flag : (" " + flag));
+    return true;
+}
+
 int PageScript::open(const char* file, int oflag)
 {
     /* Only for reading, and when page frames are enabled */
@@ -139,24 +191,41 @@ int PageScript::open(const char* file, int oflag)
     std::string manifest;
     if (!readFile(file, manifest))
         return NOT_HANDLED;
+    bool changed = false;
 
-    if (manifest.find("\"inject_js_start\"") != std::string::npos) {
-        LOG(LL_WARN, LCF_FILEIO, "The NW.js app already injects a script with inject_js_start, the page script of libTAS must be loaded by the page");
-        return NOT_HANDLED;
+    /* Seed Math.random from the initial time. Otherwise V8 seeds it from
+     * /dev/urandom, through a generator that it also uses for other things
+     * (e.g. identity hashes), so the random numbers of the game would depend
+     * on the timing of the threads that read /dev/urandom and of the work
+     * that the page does before its first random number. */
+    if (manifest.find("--random-seed") != std::string::npos) {
+        LOG(LL_WARN, LCF_FILEIO, "The NW.js app already sets a V8 random seed, the random numbers do not depend on the initial time");
+    }
+    else {
+        std::string flag = "--random-seed=" + std::to_string(randomSeed());
+        if (addJsFlag(manifest, flag)) {
+            LOG(LL_INFO, LCF_FILEIO, "Seeding the random numbers of the NW.js app with %s", flag.c_str());
+            changed = true;
+        }
+        else {
+            LOG(LL_WARN, LCF_FILEIO, "Could not add a V8 random seed to the NW.js manifest %s, the random numbers may not be deterministic", file);
+        }
     }
 
     /* Add the script as the first member of the manifest object */
-    size_t brace = manifest.find('{');
-    if (brace == std::string::npos) {
-        LOG(LL_WARN, LCF_FILEIO, "Could not read the NW.js manifest %s, the page script of libTAS must be loaded by the page", file);
-        return NOT_HANDLED;
+    if (manifest.find("\"inject_js_start\"") != std::string::npos) {
+        LOG(LL_WARN, LCF_FILEIO, "The NW.js app already injects a script with inject_js_start, the page script of libTAS must be loaded by the page");
     }
-    size_t next = manifest.find_first_not_of(" \t\r\n", brace + 1);
-    bool empty = (next != std::string::npos) && (manifest[next] == '}');
-    std::string member = "\"inject_js_start\": \"" LIBTAS_PAGE_SCRIPT_PATH "\"";
-    manifest.insert(brace + 1, empty ? member : (member + ","));
+    else if (insertMember(manifest, "\"inject_js_start\": \"" LIBTAS_PAGE_SCRIPT_PATH "\"")) {
+        LOG(LL_INFO, LCF_FILEIO, "Injecting the page script into the NW.js app with its manifest %s", file);
+        changed = true;
+    }
+    else {
+        LOG(LL_WARN, LCF_FILEIO, "Could not read the NW.js manifest %s, the page script of libTAS must be loaded by the page", file);
+    }
 
-    LOG(LL_INFO, LCF_FILEIO, "Injecting the page script into the NW.js app with its manifest %s", file);
+    if (!changed)
+        return NOT_HANDLED;
     return memoryFile("package.json", manifest);
 }
 

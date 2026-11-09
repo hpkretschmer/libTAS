@@ -26,7 +26,9 @@
  * unchanged: when page frames are enabled with LIBTAS_PAGE_FRAMES=1, the
  * manifest package.json of the NW.js app that the game reads gets
  * "inject_js_start" with the path below, and libTAS gives the script when the
- * game reads that path. */
+ * game reads that path. The manifest also gets the V8 flag
+ * "--random-seed=<initial time>" in its "js-flags", so that Math.random only
+ * depends on the initial time. */
 #define LIBTAS_PAGE_SCRIPT_PATH "/libtas/libtas_web.js"
 
 namespace libtas {
