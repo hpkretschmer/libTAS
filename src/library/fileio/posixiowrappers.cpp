@@ -95,8 +95,9 @@ int open (const char *file, int oflag, ...)
 
     int fd = 0;
 
-    /* Manifest and injected script of browser-based games */
-    fd = PageScript::open(file, oflag);
+    /* Injected script of browser-based games (not their manifest, which the
+     * game's scripts read with open(), see PageScript.h) */
+    fd = PageScript::open(file, oflag, false);
     if (fd != PageScript::NOT_HANDLED)
         return fd;
 
@@ -196,8 +197,9 @@ int open64 (const char *file, int oflag, ...)
 
     int fd = 0;
 
-    /* Manifest and injected script of browser-based games */
-    fd = PageScript::open(file, oflag);
+    /* Injected script of browser-based games (not their manifest, which the
+     * game's scripts read with open(), see PageScript.h) */
+    fd = PageScript::open(file, oflag, false);
     if (fd != PageScript::NOT_HANDLED)
         return fd;
 
@@ -296,9 +298,10 @@ int openat (int dirfd, const char *file, int oflag, ...)
 
     int fd = 0;
 
-    /* Manifest and injected script of browser-based games */
+    /* Injected script of browser-based games (not their manifest, which the
+     * game's scripts read with open(), see PageScript.h) */
     if ((dirfd == AT_FDCWD) || (file[0] == '/')) {
-        fd = PageScript::open(file, oflag);
+        fd = PageScript::open(file, oflag, false);
         if (fd != PageScript::NOT_HANDLED)
             return fd;
     }
@@ -345,9 +348,10 @@ int openat64 (int dirfd, const char *file, int oflag, ...)
 
     int fd = 0;
 
-    /* Manifest and injected script of browser-based games */
+    /* Injected script of browser-based games (not their manifest, which the
+     * game's scripts read with open(), see PageScript.h) */
     if ((dirfd == AT_FDCWD) || (file[0] == '/')) {
-        fd = PageScript::open(file, oflag);
+        fd = PageScript::open(file, oflag, false);
         if (fd != PageScript::NOT_HANDLED)
             return fd;
     }

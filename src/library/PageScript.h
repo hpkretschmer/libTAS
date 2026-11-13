@@ -28,7 +28,8 @@
  * "inject_js_start" with the path below, and libTAS gives the script when the
  * game reads that path. The manifest also gets the V8 flag
  * "--random-seed=<initial time>" in its "js-flags", so that Math.random only
- * depends on the initial time. */
+ * depends on the initial time, and the Chromium options of the environment
+ * variable LIBTAS_CHROMIUM_ARGS in its "chromium-args". */
 #define LIBTAS_PAGE_SCRIPT_PATH "/libtas/libtas_web.js"
 
 namespace libtas {
@@ -38,10 +39,13 @@ namespace PageScript
 /* Returned by open() if the file is not one that libTAS gives */
 static const int NOT_HANDLED = -2;
 
-/* If `file` is the manifest of the NW.js app or the injected script, returns
- * a file descriptor of a read-only copy in memory with the content that
- * libTAS gives, or -1 on error. Otherwise returns NOT_HANDLED. */
-int open(const char* file, int oflag);
+/* If `file` is the injected script, or the manifest of the NW.js app and
+ * `giveManifest` is true, returns a file descriptor of a read-only copy in memory
+ * with the content that libTAS gives, or -1 on error. Otherwise returns
+ * NOT_HANDLED. NW.js reads the manifest with fopen(), the game's scripts
+ * (Node.js) with open(): only NW.js gets the changed manifest, so that the
+ * game sees its own (e.g. OneLoader compares it with its backup). */
+int open(const char* file, int oflag, bool giveManifest);
 }
 
 }

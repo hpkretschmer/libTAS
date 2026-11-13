@@ -63,9 +63,10 @@ FILE *fopen (const char *filename, const char *modes)
 
     FILE* f = nullptr;
 
-    /* Manifest and injected script of browser-based games */
+    /* Manifest and injected script of browser-based games (NW.js reads its
+     * manifest with fopen) */
     if (modes && (modes[0] == 'r') && !strchr(modes, '+')) {
-        int fd = PageScript::open(filename, O_RDONLY);
+        int fd = PageScript::open(filename, O_RDONLY, true);
         if (fd == -1)
             return nullptr;
         if (fd != PageScript::NOT_HANDLED)
@@ -142,9 +143,10 @@ FILE *fopen64 (const char *filename, const char *modes)
 
     FILE* f = nullptr;
 
-    /* Manifest and injected script of browser-based games */
+    /* Manifest and injected script of browser-based games (NW.js reads its
+     * manifest with fopen) */
     if (modes && (modes[0] == 'r') && !strchr(modes, '+')) {
-        int fd = PageScript::open(filename, O_RDONLY);
+        int fd = PageScript::open(filename, O_RDONLY, true);
         if (fd == -1)
             return nullptr;
         if (fd != PageScript::NOT_HANDLED)

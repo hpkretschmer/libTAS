@@ -142,17 +142,17 @@ static int randomSeed()
     return seed ? static_cast<int>(seed) : static_cast<int>(max);
 }
 
-/* Adds `flag` to the V8 flags of the manifest ("js-flags"), returns false if
- * the manifest could not be changed */
-static bool addJsFlag(std::string& manifest, const std::string& flag)
+/* Adds `flag` at the end of the string member `name` of the manifest (e.g.
+ * "js-flags"), returns false if the manifest could not be changed */
+static bool addFlag(std::string& manifest, const char* name, const std::string& flag)
 {
-    static const char key[] = "\"js-flags\"";
+    std::string key = std::string("\"") + name + "\"";
     size_t pos = manifest.find(key);
     if (pos == std::string::npos)
-        return insertMember(manifest, std::string(key) + ": \"" + flag + "\"");
+        return insertMember(manifest, key + ": \"" + flag + "\"");
 
     /* Add the flag at the end of the string value */
-    size_t colon = manifest.find_first_not_of(" \t\r\n", pos + sizeof(key) - 1);
+    size_t colon = manifest.find_first_not_of(" \t\r\n", pos + key.size());
     if ((colon == std::string::npos) || (manifest[colon] != ':'))
         return false;
     size_t quote = manifest.find_first_not_of(" \t\r\n", colon + 1);
@@ -171,7 +171,7 @@ static bool addJsFlag(std::string& manifest, const std::string& flag)
     return true;
 }
 
-int PageScript::open(const char* file, int oflag)
+int PageScript::open(const char* file, int oflag, bool giveManifest)
 {
     /* Only for reading, and when page frames are enabled */
     if (!file || ((oflag & O_ACCMODE) != O_RDONLY) || !enabled())
@@ -185,7 +185,7 @@ int PageScript::open(const char* file, int oflag)
         return memoryFile("libtas_web.js", script);
     }
 
-    if (!isAppManifest(file))
+    if (!giveManifest || !isAppManifest(file))
         return NOT_HANDLED;
 
     std::string manifest;
@@ -203,12 +203,34 @@ int PageScript::open(const char* file, int oflag)
     }
     else {
         std::string flag = "--random-seed=" + std::to_string(randomSeed());
-        if (addJsFlag(manifest, flag)) {
+        if (addFlag(manifest, "js-flags", flag)) {
             LOG(LL_INFO, LCF_FILEIO, "Seeding the random numbers of the NW.js app with %s", flag.c_str());
             changed = true;
         }
         else {
             LOG(LL_WARN, LCF_FILEIO, "Could not add a V8 random seed to the NW.js manifest %s, the random numbers may not be deterministic", file);
+        }
+    }
+
+    /* Chromium options from LIBTAS_CHROMIUM_ARGS, added to the manifest, so
+     * that the command line of the game only has its own arguments, as with
+     * Steam: some games read them, e.g. OMORI 1.0.6 takes its decryption key
+     * from them. */
+    const char* chromiumArgs = std::getenv("LIBTAS_CHROMIUM_ARGS");
+    if (chromiumArgs && (chromiumArgs[0] != '\0')) {
+        /* As a JSON string */
+        std::string args;
+        for (const char* c = chromiumArgs; *c; c++) {
+            if ((*c == '"') || (*c == '\\'))
+                args += '\\';
+            args += *c;
+        }
+        if (addFlag(manifest, "chromium-args", args)) {
+            LOG(LL_INFO, LCF_FILEIO, "Adding %s to the chromium-args of the NW.js manifest", chromiumArgs);
+            changed = true;
+        }
+        else {
+            LOG(LL_WARN, LCF_FILEIO, "Could not add the Chromium options to the NW.js manifest %s", file);
         }
     }
 
