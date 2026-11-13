@@ -38,10 +38,11 @@ DEFINE_ORIG_POINTER(nanosleep)
 /* Advance time when sleep call, depending on config and main thread.
  * Returns if the call was transfered.
  */
-void transfer_sleep(const struct timespec &ts, struct timespec *rem)
+void transfer_sleep(const struct timespec &ts, struct timespec *rem, bool waited)
 {    
-    /* Skip sleeping when main thread and fast-forwarding */
-    if (!ThreadManager::isMainThread() || !Global::shared_config.fastforward) {
+    /* Skip sleeping when main thread and fast-forwarding, or when the caller
+     * already waited */
+    if (!waited && (!ThreadManager::isMainThread() || !Global::shared_config.fastforward)) {
         LINK_NAMESPACE_GLOBAL(nanosleep);
         orig::nanosleep(&ts, rem);
     }

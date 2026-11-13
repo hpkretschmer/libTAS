@@ -29,9 +29,11 @@
 namespace libtas {
 
 /* Advance time when sleep call, depending on config and main thread.
- * Returns if the call was transfered.
- */
-void transfer_sleep(const struct timespec &ts, struct timespec *rem);
+ * `waited` is true if the caller already
+ * waited for that time (e.g. a poll() that timed out), so that it is not
+ * waited a second time: the thread would not see its file descriptors in the
+ * meantime, e.g. the request to exit of a thread that the game joins. */
+void transfer_sleep(const struct timespec &ts, struct timespec *rem, bool waited = false);
 
 /* Sleep USECONDS microseconds, or until a signal arrives that is not blocked
    or ignored.

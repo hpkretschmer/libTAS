@@ -33,8 +33,11 @@ namespace libtas {
 
 RenderHUD_XImage::~RenderHUD_XImage()
 {
-    ImGui_ImplXlib_Shutdown();
-    ImGui::DestroyContext();
+    /* Another HUD may have shut down ImGui already */
+    if (ImGui::GetCurrentContext()) {
+        ImGui_ImplXlib_Shutdown();
+        ImGui::DestroyContext();
+    }
 }
 
 void RenderHUD_XImage::setImage(const XImage* image)

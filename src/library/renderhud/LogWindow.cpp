@@ -25,11 +25,15 @@
 
 namespace libtas {
 
-static ImGuiTextBuffer buffer;
+/* The log is never destroyed: threads of the game can still log while the
+ * process exits, after the destructors of static objects ran, and the
+ * destructor of ImVector frees its data without resetting its pointer, so
+ * appending to a destroyed buffer would corrupt the heap. */
+static ImGuiTextBuffer& buffer = *new ImGuiTextBuffer;
 static ImGuiTextFilter filter;
-static ImVector<int> lineOffsets; // Index to lines offset. We maintain this with AddLog() calls.
+static ImVector<int>& lineOffsets = *new ImVector<int>; // Index to lines offset. We maintain this with AddLog() calls.
 static bool autoScroll;  // Keep scrolling if already at the bottom.
-static std::mutex mutex;
+static std::mutex& mutex = *new std::mutex;
 
 void LogWindow::clear()
 {

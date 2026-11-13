@@ -117,7 +117,7 @@ DEFINE_ORIG_POINTER(epoll_wait)
         ts.tv_sec = timeout / 1000;
         ts.tv_nsec = (timeout % 1000) * 1000000;
 
-        transfer_sleep(ts, NULL);        
+        transfer_sleep(ts, NULL, true);        
     }
 
     return ret;
@@ -137,7 +137,7 @@ int ppoll (struct pollfd *fds, nfds_t nfds, const struct timespec *timeout, cons
 
     /* If timeout on main thread, add the timeout amount to the timer */
     if (ret == 0 && timeout) {
-        transfer_sleep(*timeout, NULL);        
+        transfer_sleep(*timeout, NULL, true);        
     }
 
     return ret;
@@ -221,7 +221,7 @@ int ppoll (struct pollfd *fds, nfds_t nfds, const struct timespec *timeout, cons
         struct timespec ts;
         ts.tv_sec = timeout / 1000;
         ts.tv_nsec = 1000000 * (timeout % 1000);
-        transfer_sleep(ts, NULL);
+        transfer_sleep(ts, NULL, true);
     }
 
     return ret;

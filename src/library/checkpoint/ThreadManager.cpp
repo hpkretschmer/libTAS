@@ -383,8 +383,10 @@ void ThreadManager::deallocateThreads()
     for (ThreadInfo* thread = thread_list; thread != nullptr; thread = next) {
         next = thread->next;
 
-        /* Skip the main thread */
-        if (thread->state == ThreadInfo::ST_CKPNTHREAD)
+        /* Only delete the threads that ended: this runs when the game
+         * exits, while its other threads may still run and use their struct
+         * (e.g. in threadExit()). This also skips the main thread. */
+        if (thread->state != ThreadInfo::ST_ZOMBIE)
             continue;
 
         /* Delete the thread struct */
