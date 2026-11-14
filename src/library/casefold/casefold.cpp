@@ -28,11 +28,13 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <utime.h>
 #include <unistd.h>
@@ -120,6 +122,7 @@ PATH_WRAPPER(int, rmdir, nullptr, (const char* path), (path))
 PATH_WRAPPER(int, mkdir, nullptr, (const char* path, mode_t mode), (path, mode))
 PATH_WRAPPER(int, chmod, nullptr, (const char* path, mode_t mode), (path, mode))
 PATH_WRAPPER(int, utime, nullptr, (const char* path, const struct utimbuf* times), (path, times))
+PATH_WRAPPER(ssize_t, readlink, nullptr, (const char* path, char* buf, size_t len), (path, buf, len))
 PATH_WRAPPER(int, utimes, nullptr, (const char* path, const struct timeval times[2]), (path, times))
 
 #define FSTATAT_WRAPPER(FUNC, STAT) \
@@ -131,6 +134,42 @@ EXPORT int FUNC(int ver, int dirfd, const char* path, struct STAT* buf, int flag
 
 FSTATAT_WRAPPER(__fxstatat, stat)
 FSTATAT_WRAPPER(__fxstatat64, stat64)
+
+/* NW.js 0.44 loads Node.js (libnode.so) with RTLD_DEEPBIND, so that Node.js
+ * calls the functions of the C library directly instead of the ones above.
+ * Node.js has no symbols in common with the rest of NW.js except operator
+ * new and delete, so it can be loaded without it. */
+EXPORT void* dlopen(const char* file, int mode)
+{
+    static decltype(&dlopen) orig;
+    if (file && (mode & RTLD_DEEPBIND)) {
+        const char* slash = strrchr(file, '/');
+        const char* name = slash ? slash + 1 : file;
+        if (strncmp(name, "libnode.so", 10) == 0)
+            mode &= ~RTLD_DEEPBIND;
+    }
+    return next(orig, "dlopen")(file, mode);
+}
+
+/* libuv (Node.js of NW.js 0.44 and later) calls statx through syscall() */
+EXPORT long syscall(long number, ...)
+{
+    va_list args;
+    va_start(args, number);
+    long a[6];
+    for (long& arg : a)
+        arg = va_arg(args, long);
+    va_end(args);
+
+    static decltype(&syscall) orig;
+    next(orig, "syscall");
+    if (number == SYS_statx) {
+        return CasePath::callAt(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]), [&](const char* path) {
+            return orig(number, a[0], reinterpret_cast<long>(path), a[2], a[3], a[4]);
+        });
+    }
+    return orig(number, a[0], a[1], a[2], a[3], a[4], a[5]);
+}
 
 /* Both paths may differ by case from existing files */
 EXPORT int rename(const char* oldf, const char* newf)

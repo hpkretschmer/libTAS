@@ -52,6 +52,7 @@ void enable();
 bool resolve(int dirfd, const char* path, std::string& resolved);
 
 inline bool isFailure(int ret) {return ret < 0;}
+inline bool isFailure(long ret) {return ret < 0;}
 template<typename T> inline bool isFailure(T* ret) {return ret == nullptr;}
 
 /* Call `call` with `path`, and if it fails because the path does not exist,
