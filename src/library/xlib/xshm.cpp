@@ -39,6 +39,7 @@ DEFINE_ORIG_POINTER(XShmPutImage)
 DEFINE_ORIG_POINTER(XPutImage)
 
 XImage* x11::gameXImage = nullptr;
+bool x11::fullRedrawRequested = false;
 
 /* XPutImage callers may pass a temporary XImage structure, so we keep a copy.
  * Its pixel data must stay valid, which is the case for Chromium. */
@@ -154,9 +155,10 @@ OVERRIDE int XPutImage(
             /* Remove the HUD from the screen once it is not drawn anymore */
             full_redraw = true;
         }
-        else if (full_redraw) {
+        else if (full_redraw || x11::fullRedrawRequested) {
             NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, 0, 0, dst_x - src_x, dst_y - src_y, image->width, image->height));
             full_redraw = false;
+            x11::fullRedrawRequested = false;
         }
         else {
             NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height));

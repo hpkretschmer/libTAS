@@ -27,6 +27,9 @@
 #include "encoding/AVEncoder.h"
 #include "encoding/Screenshot.h"
 #include "general/timewrappers.h" // clock_gettime
+#ifdef __unix__
+#include "xlib/xshm.h" // x11::fullRedrawRequested
+#endif
 #include "checkpoint/ThreadManager.h"
 #include "checkpoint/SaveStateManager.h"
 #include "checkpoint/Checkpoint.h"
@@ -769,6 +772,9 @@ static void receive_messages(std::function<void()> draw, RenderHUD& hud)
                     sendFrameCountTime();
 
                     /* Screen should have changed after loading */
+#ifdef __unix__
+                    x11::fullRedrawRequested = true;
+#endif
                     screen_redraw(draw, hud, preview_ai, false);
                 }
                 else if (status == 0) {

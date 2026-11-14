@@ -29,7 +29,11 @@ namespace libtas {
 
 namespace x11 {
     /* XImage to render */
-    extern XImage* gameXImage;    
+    extern XImage* gameXImage;
+
+/* Set after loading a savestate: the window shows a frame from before
+ * loading, so the next XPutImage draw must present the whole image */
+extern bool fullRedrawRequested;    
 }
 
 OVERRIDE Bool XShmPutImage(

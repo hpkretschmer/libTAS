@@ -94,6 +94,15 @@ int ScreenCapture_XShm::getPixelsFromSurface(uint8_t **pixels, bool draw)
 
 int ScreenCapture_XShm::copySurfaceToScreen()
 {
+    /* With XPutImage (e.g. Chromium's software output), the image is the
+     * game's own frame buffer, of which the game only presents and updates
+     * the damaged area each frame. Our copy may be older than it (it is not
+     * updated while skipping draws in fast-forward), and writing it back would
+     * leave parts of an old frame in the game's buffer for good. The buffer
+     * already holds the current frame, and the HUD is drawn on a copy. */
+    if (Global::game_info.video & GameInfo::XIMAGE)
+        return 0;
+
     memcpy(x11::gameXImage->data, winpixels.data(), size);
 
     return 0;
