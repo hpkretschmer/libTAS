@@ -60,6 +60,9 @@
 #include <stdint.h>
 #include <sys/statvfs.h>
 #include <cerrno>
+#ifdef __linux__
+#include <sys/sysmacros.h> // makedev
+#endif
 #ifdef __unix__
 #include <X11/Xlibint.h>
 #include <X11/Xlib-xcb.h>
@@ -150,6 +153,7 @@ static _xstate ss_fpregset;
 
 static void readAllAreas();
 static int reallocateArea(Area *saved_area, Area *current_area);
+static void closeRecreatedFiles();
 static void readAnArea(SaveStateLoading &saved_area, int spmfd, PagemapCache &pagemap_cache, SaveStateLoading &parent_state, SaveStateLoading &base_state);
 
 static void writeAllAreas(bool base);
@@ -460,6 +464,36 @@ static void readAllAreas()
         }
     }
     
+    /* The mappings hold the recreated files */
+    closeRecreatedFiles();
+
+    /* List the shared mappings of deleted files, which are the only way to
+     * reopen file descriptors of these files that the game closed since the
+     * savestate. On our stack, which is not overwritten by loading memory. */
+    FileHandleList::DeletedFileMapping deleted_mappings[512];
+    int deleted_count = 0;
+    saved_state.restart();
+    saved_area = saved_state.getArea();
+    while (saved_area.isStandard()) {
+        size_t len = strlen(saved_area.name);
+        if (!saved_area.skip && (saved_area.flags & Area::AREA_SHARED) && (saved_area.flags & Area::AREA_FILE) &&
+            (len > 10) && (0 == strcmp(saved_area.name + len - 10, " (deleted)"))) {
+            dev_t device = makedev(saved_area.devmajor, saved_area.devminor);
+            bool known = false;
+            for (int i = 0; i < deleted_count; i++)
+                if ((deleted_mappings[i].inode == saved_area.inodenum) && (deleted_mappings[i].device == device))
+                    known = true;
+            if (!known && (deleted_count < static_cast<int>(sizeof(deleted_mappings)/sizeof(deleted_mappings[0])))) {
+                deleted_mappings[deleted_count].device = device;
+                deleted_mappings[deleted_count].inode = saved_area.inodenum;
+                deleted_mappings[deleted_count].addr = saved_area.addr;
+                deleted_mappings[deleted_count].endAddr = saved_area.endAddr;
+                deleted_count++;
+            }
+        }
+        saved_area = saved_state.nextArea();
+    }
+
     /* Now that the memory layout matches the savestate, we load savestate into memory */
     saved_state.restart();
     saved_area = saved_state.getArea();
@@ -475,9 +509,18 @@ static void readAllAreas()
         saved_area = saved_state.nextArea();
     }
     
+    if (crfd != -1) {
+        /* Clear soft-dirty bits now that memory matches the savestate. What
+         * we do from here on (e.g. in syncFileDescriptors(), which can
+         * allocate memory or construct static objects) must be seen as
+         * modified by the next incremental savestate or loading. */
+        Utils::writeAll(crfd, "4\n", 2);
+        close(crfd);
+    }
+
     /* Before restoring savefiles, we open and close file descriptors to be in 
      * sync with when the savestate was made. */
-    FileHandleList::syncFileDescriptors();
+    FileHandleList::syncFileDescriptors(deleted_mappings, deleted_count);
     
     /* The remaining areas are savefiles */
     while (saved_area) {
@@ -485,13 +528,78 @@ static void readAllAreas()
         saved_area = saved_state.nextArea();
     }
 
-    if (crfd != -1) {
-        /* Clear soft-dirty bits */
-        Utils::writeAll(crfd, "4\n", 2);
-        close(crfd);
+    close(spmfd);
+}
+
+/* Returns if the file descriptor saved with an area (the game's descriptor of
+ * a deleted file) still refers to the file of that area. The game may have
+ * closed it since the savestate, or the same number may now be used by
+ * another file. */
+static bool savedFdMatchesArea(const Area& area)
+{
+    if (area.fd < 0)
+        return false;
+
+    struct stat fd_stat;
+    if (fstat(area.fd, &fd_stat) != 0)
+        return false;
+
+    return (fd_stat.st_ino == area.inodenum) &&
+           (fd_stat.st_dev == makedev(area.devmajor, area.devminor));
+}
+
+/* Shared mappings of files that do not exist anymore (e.g. shared memory that
+ * the game deleted after the savestate) are recreated when loading from a
+ * memfd per file, so that all mappings of the same file share their memory
+ * again (NW.js maps its shared memory twice). Only used while reallocating
+ * areas, so no memory allocation. */
+struct RecreatedFile {
+    char name[Area::FILENAMESIZE];
+    ino_t inode;
+    int fd;
+    off_t size;
+};
+static RecreatedFile recreated_files[256];
+static int recreated_count = 0;
+
+static int recreatedFileFd(const Area* area)
+{
+    off_t needed = area->offset + area->size;
+    for (int i = 0; i < recreated_count; i++) {
+        RecreatedFile& rf = recreated_files[i];
+        if ((rf.inode == area->inodenum) && (0 == strncmp(rf.name, area->name, Area::FILENAMESIZE))) {
+            if (rf.size < needed) {
+                if (ftruncate(rf.fd, needed) == 0)
+                    rf.size = needed;
+            }
+            return rf.fd;
+        }
     }
 
-    close(spmfd);
+    if (recreated_count >= static_cast<int>(sizeof(recreated_files)/sizeof(recreated_files[0])))
+        return -1;
+
+    int fd = syscall(SYS_memfd_create, "libtas_restored", MFD_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    if (ftruncate(fd, needed) != 0) {
+        close(fd);
+        return -1;
+    }
+
+    RecreatedFile& rf = recreated_files[recreated_count++];
+    snprintf(rf.name, sizeof(rf.name), "%s", area->name);
+    rf.inode = area->inodenum;
+    rf.fd = fd;
+    rf.size = needed;
+    return fd;
+}
+
+static void closeRecreatedFiles()
+{
+    for (int i = 0; i < recreated_count; i++)
+        close(recreated_files[i].fd);
+    recreated_count = 0;
 }
 
 static int reallocateArea(Area *saved_area, Area *current_area)
@@ -681,7 +789,12 @@ static int reallocateArea(Area *saved_area, Area *current_area)
         /* For file mapping, we try to use an already existing file descriptor
          * of that file. This is even necessary when the file was deleted.
          * If not file descriptor, we try to open the file. */
+        if ((saved_area->fd != -1) && !savedFdMatchesArea(*saved_area)) {
+            LOG(LL_DEBUG, LCF_CHECKPOINT, "File descriptor %d of %s is not valid anymore", saved_area->fd, saved_area->name);
+            saved_area->fd = -1;
+        }
         int imagefd = saved_area->fd;
+        bool recreated = false;
         if ((saved_area->flags & Area::AREA_FILE) && (imagefd == -1)) {
             /* We shouldn't be creating any special section such as [heap] or [stack] */
             MYASSERT(saved_area->name[0] == '/')
@@ -702,6 +815,18 @@ static int reallocateArea(Area *saved_area, Area *current_area)
                     if (aligned_curr_size < (saved_area->offset + saved_area->size)) {
                         LOG(LL_WARN, LCF_CHECKPOINT, "File %s was mapped to offset %zu but has a current size of %zd", saved_area->name, saved_area->offset + saved_area->size, curr_size);
                     }
+                }
+            }
+            else if (saved_area->flags & Area::AREA_SHARED) {
+                /* The file of a shared mapping is gone: recreate it, shared
+                 * with the other mappings of the same file */
+                imagefd = recreatedFileFd(saved_area);
+                if (imagefd >= 0)
+                    recreated = true;
+                else {
+                    saved_area->flags &= ~Area::AREA_FILE;
+                    saved_area->flags |= Area::AREA_ANON;
+                    saved_area->offset = 0;
                 }
             }
             else {
@@ -731,7 +856,7 @@ static int reallocateArea(Area *saved_area, Area *current_area)
         }
 
         /* Close image file if we opened it */
-        if ((imagefd != -1) && (saved_area->fd != imagefd)) {
+        if ((imagefd != -1) && (saved_area->fd != imagefd) && !recreated) {
             close(imagefd);
         }
 
@@ -749,9 +874,16 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
     if (saved_area.skip)
         return;
 
-    /* Skip if both saved and current area are uncommitted */
-    if (saved_area.uncommitted && saved_area.isUncommitted(spmfd))
+    /* The area was uncommitted (no page present) when saving. Pages may have
+     * been committed and written since then, and only had their protection
+     * set back to none by reallocateArea(), so they still hold data (and
+     * isUncommitted() only checks the first page). Discard all pages, so that
+     * they read as zero again like in the savestate: allocators like the one
+     * of Blink (NW.js) expect newly committed pages to be zero. */
+    if (saved_area.uncommitted) {
+        MYASSERT(madvise(saved_area.addr, saved_area.size, MADV_DONTNEED) == 0)
         return;
+    }
 
     saved_area.print("Restore");
 
@@ -777,12 +909,16 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
 
     /* File descriptor of the shared mapped file, to check for holes */
     int shared_fd = -1;
+    bool use_saved_fd = false; // shared_fd is the game's fd, do not close it
     off_t shared_next_off_hole = -1;
     off_t shared_next_off_data = -1;
 
     if (saved_area.flags & Area::AREA_SHARED) {
-        /* If the area mapped from a memfd, we use the underlying fd */
-        shared_fd = saved_area.fd;
+        /* If the area mapped from a memfd, we use the underlying fd, if it
+         * is still valid */
+        use_saved_fd = savedFdMatchesArea(saved_area);
+        if (use_saved_fd)
+            shared_fd = saved_area.fd;
         
         /* Then try first to open the file */
         if (shared_fd == -1) {
@@ -800,7 +936,8 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
             shared_next_off_hole = lseek(shared_fd, saved_area.offset, SEEK_HOLE);                
             if (shared_next_off_hole == -1) {
                 LOG(LL_DEBUG, LCF_CHECKPOINT, "     Could not seek into shared map file %s", saved_area.map_file);
-                close(shared_fd);
+                if (!use_saved_fd)
+                    close(shared_fd);
                 shared_fd = -1;
             }
             else {
@@ -828,6 +965,13 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
         bool page_file = page & (0x1ull << 61);
         bool page_present = page & (0x1ull << 63);
 
+        /* Soft-dirty bits only see writes through this mapping. A shared
+         * mapping can be written through another mapping of the same file
+         * (e.g. NW.js maps its shared memory twice in single-process mode)
+         * or by another process, so consider its pages always modified. */
+        if (saved_area.flags & Area::AREA_SHARED)
+            soft_dirty = true;
+
         if (flag == Area::GUARD_PAGE) {
             pagecount_skip++;
             LOG(LL_DEBUG, LCF_CHECKPOINT, "    Skip reading guard page at %p(isGuardPage=%d)", curAddr);
@@ -852,9 +996,12 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
          * TODO: This setting breaks savestates in Freedom Planet, when saving
          * on one stage, advancing to the next stage, loading the state and 
          * advancing to next stage again. */
+        /* A swapped out page is not present, but still has content */
+        bool page_swapped = page & (0x1ull << 62);
+
         if (flag == Area::NO_PAGE) {
             if (saved_area.flags & Area::AREA_PRIV) {
-                if (page_present && (!Utils::isZeroPage(static_cast<void*>(curAddr)))) {
+                if ((page_present || page_swapped) && (!Utils::isZeroPage(static_cast<void*>(curAddr)))) {
                     if (!(saved_area.prot & PROT_WRITE)) {
                         MYASSERT(mprotect(curAddr, page_size, saved_area.prot | PROT_WRITE) == 0)
                     }
@@ -878,7 +1025,8 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
                         shared_next_off_hole = lseek(shared_fd, current_off, SEEK_HOLE);
                         if (shared_next_off_hole == -1) {
                             LOG(LL_DEBUG, LCF_CHECKPOINT, "     Could not seek into shared map file %s", saved_area.map_file);
-                            close(shared_fd);
+                            if (!use_saved_fd)
+                                close(shared_fd);
                             shared_fd = -1;
                         }
                         else {
@@ -960,7 +1108,7 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
         }
         
         if (flag == Area::FILE_PAGE) {
-            if (page_present && !page_file) {
+            if ((page_present && !page_file) || page_swapped) {
                 /* Page was modified, we need to restore the content of the
                  * original file */
                 if (orig_fd == -1) {
@@ -1021,6 +1169,20 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
                 continue;
             }
 
+            /* A page that was discarded since the parent state (e.g. V8 frees
+             * its heap pages with madvise()) loses its soft-dirty bit. It is
+             * then absent, or, if read again, mapped to the shared zero page,
+             * which is not exclusively mapped. It reads as zero, so we must
+             * read it from the base savestate. */
+            bool page_exclusive = page & (0x1ull << 56);
+            if ((!page_present && !page_swapped) ||
+                (page_present && !page_file && !page_exclusive && (saved_area.flags & Area::AREA_PRIV))) {
+                base_state.getPageFlag(curAddr);
+                base_state.queuePageLoad(curAddr);
+                pagecount_base++;
+                continue;
+            }
+
             pagecount_skip++;
             /* Double-check that page is indeed identical to the base savestate */
             if (Global::shared_config.logging_level >= LL_DEBUG) {
@@ -1056,7 +1218,7 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
         close(orig_fd);
 
     /* Only close the shared area fd if we opened it */
-    if (shared_fd >= 0 && (shared_fd != saved_area.fd))
+    if (shared_fd >= 0 && !use_saved_fd)
         close(shared_fd);
 }
 
@@ -1183,6 +1345,12 @@ static void writeAllAreas(bool base)
         not_eof = memMapLayout.getNextArea(&area);
     }
 
+    if (Global::shared_config.savestate_settings & SharedConfig::SS_INCREMENTAL) {
+        /* Clear soft-dirty bits right after reading the memory, so that what
+         * we do from here on is seen as modified by the next savestate. */
+        Utils::writeAll(crfd, "4\n", 2);
+    }
+
     savestate_size += writeSaveFiles(state);
 
     /* Area metadata and page flags are buffered in SaveStateSaving. Flush now
@@ -1194,11 +1362,6 @@ static void writeAllAreas(bool base)
     area.size = 0; // End of data
     Utils::writeAll(pmfd, &area, sizeof(area));
     savestate_size += sizeof(area);
-
-    if (Global::shared_config.savestate_settings & SharedConfig::SS_INCREMENTAL) {
-        /* Clear soft-dirty bits */
-        Utils::writeAll(crfd, "4\n", 2);
-    }
 
     if (crfd != -1) {
         close(crfd);
@@ -1313,6 +1476,11 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
         bool page_file = page & (0x1ull << 61);
         bool page_present = page & (0x1ull << 63);
 
+        /* See readAnArea(): pages of shared mappings may have been modified
+         * through another mapping, which soft-dirty bits do not see. */
+        if (area.flags & Area::AREA_SHARED)
+            soft_dirty = true;
+
         if (page_guard_region) {
             state.savePageFlag(Area::GUARD_PAGE);
             LOG(LL_DEBUG, LCF_CHECKPOINT, "    Skip saving guard page at %p", curAddr);
@@ -1324,10 +1492,13 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
             MYASSERT(mprotect(curAddr, page_size, area.prot | PROT_READ) == 0)
         }
 
+        /* A swapped out page is not present, but still has content */
+        bool page_swapped = page & (0x1ull << 62);
+
         if (area.flags & Area::AREA_PRIV) {
             if (area.flags & Area::AREA_ANON) {
                 /* Check if page is present */
-                if ((Global::shared_config.savestate_settings & SharedConfig::SS_PRESENT) && (!page_present)) {
+                if ((Global::shared_config.savestate_settings & SharedConfig::SS_PRESENT) && !page_present && !page_swapped) {
                     state.savePageFlag(Area::NO_PAGE);
                     pagecount_unmapped++;
                     continue;
@@ -1342,7 +1513,7 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
             }
             
             /* Check if page was mapped from file and was not modified since. */
-            if ((area.flags & Area::AREA_FILE) && (!page_present || page_file)) {
+            if ((area.flags & Area::AREA_FILE) && ((!page_present && !page_swapped) || page_file)) {
                 state.savePageFlag(Area::FILE_PAGE);
                 pagecount_zero_or_file++;
 
@@ -1409,7 +1580,11 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
                 }
             }
 
-            if (!page_present && !(area.flags & Area::AREA_MEMFD)) {
+            /* Pages of memfd and /dev/shm files are only in memory, and their
+             * content changes (the page may only be mapped through another
+             * mapping of the same file, see the duplicate area check in
+             * writeAllAreas()), so we must save them. */
+            if (!page_present && !(area.flags & (Area::AREA_MEMFD | Area::AREA_SHM))) {
                 state.savePageFlag(Area::FILE_PAGE);
                 pagecount_zero_or_file++;
                 continue;

@@ -112,11 +112,15 @@ int fdFromFile(const char* file, dev_t device, ino_t inode)
     return -1;
 }
 
+/* Returned when no file handle matches. Not a static local: its guard
+ * variable would be restored by loading a savestate made before the first
+ * call, so it would be constructed again (and its destructor registered
+ * again) during each state loading. */
+static const FileHandle fh_zero;
+
 const FileHandle& fileHandleFromFd(int fd)
 {
     auto& filehandles = getFileList();
-
-    static FileHandle fh_zero;
 
     for (const FileHandle &fh : filehandles) {
         if (fh.fds[0] == fd)
@@ -396,7 +400,7 @@ void recoverPipeContents()
     }
 }
 
-void syncFileDescriptors()
+void syncFileDescriptors(const DeletedFileMapping* deleted_mappings, int deleted_count)
 {
     /* Browse all possible values of fd. We don't go past our reserve value,
      * which contains the fds for the state loading procedure */ 
@@ -464,9 +468,36 @@ void syncFileDescriptors()
                 continue;
             }
 
+            /* A deleted file (e.g. shared memory that the game closed since
+             * the savestate) can only be reopened from one of its mappings */
+            const DeletedFileMapping* dm = nullptr;
+            for (int i = 0; (fh.inode != 0) && (i < deleted_count); i++) {
+                if ((deleted_mappings[i].inode == fh.inode) && (deleted_mappings[i].device == fh.device)) {
+                    dm = &deleted_mappings[i];
+                    break;
+                }
+            }
+
             /* Recreate a memfd if savefile */
             const SaveFile* sf = SaveFileList::getSaveFile(fd);
-            if (sf) {
+            if (dm && !sf) {
+                char map_file[64];
+                snprintf(map_file, sizeof(map_file), "/proc/self/map_files/%lx-%lx",
+                         reinterpret_cast<uintptr_t>(dm->addr), reinterpret_cast<uintptr_t>(dm->endAddr));
+                int new_fd = open(map_file, O_RDWR);
+                if (new_fd < 0)
+                    new_fd = open(map_file, O_RDONLY);
+                if (new_fd < 0) {
+                    LOG(LL_ERROR, LCF_CHECKPOINT | LCF_FILEIO, "Could not reopen deleted file %s from its mapping", fh.fileName);
+                    continue;
+                }
+                if (new_fd != fd) {
+                    LOG(LL_WARN, LCF_CHECKPOINT | LCF_FILEIO, "Recreate fd was supposed to be %d but is instead %d...", fd, new_fd);
+                    close(new_fd);
+                    continue;
+                }
+            }
+            else if (sf) {
                 int new_fd = syscall(SYS_memfd_create, sf->filename.c_str(), 0);
                 if (new_fd < 0) {
                     LOG(LL_ERROR, LCF_CHECKPOINT | LCF_FILEIO, "Could not create memfd");

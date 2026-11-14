@@ -56,9 +56,18 @@ void recoverFileOffsets();
 /* Recover the content of all pipes */
 void recoverPipeContents();
 
+/* A shared mapping of a deleted file (e.g. shared memory) after loading a
+ * state, used to reopen file descriptors of that file. */
+struct DeletedFileMapping {
+    dev_t device;
+    ino_t inode;
+    void* addr;
+    void* endAddr;
+};
+
 /* Recreate and close all file descriptors, so that the current list match the
  * list that was present when the state was saved. */
-void syncFileDescriptors();
+void syncFileDescriptors(const DeletedFileMapping* deleted_mappings = nullptr, int deleted_count = 0);
 
 }
 

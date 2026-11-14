@@ -145,12 +145,28 @@ bool Area::isUncommitted(int spmfd) const
      * the VM_ACCOUNT flag that is set when an area becomes writable, and the 
      * fact that two areas without matching VM_ACCOUNT flag cannot be merged. */
     
-    /* Seek at the beginning of the area pagemap */
-    lseek(spmfd, static_cast<off_t>(reinterpret_cast<uintptr_t>(addr) / (Utils::getPageSize()/8)), SEEK_SET);
-    uint64_t page;
-    Utils::readAll(spmfd, &page, 8);
-    bool page_present = page & (0x1ull << 63);
-    return !page_present;
+    /* That logic does not hold: an allocator can commit pages, write to
+     * them and remove their permissions while keeping them (or libTAS did
+     * so when loading a savestate). So check all pages of the area, except
+     * for huge areas (e.g. reserved address space), where only the first
+     * page is checked. A page is in use if present or swapped out. */
+    size_t page_size = Utils::getPageSize();
+    size_t nb_pages = size / page_size;
+    if (size > (4ull << 30))
+        nb_pages = 1;
+
+    off_t offset = static_cast<off_t>(reinterpret_cast<uintptr_t>(addr) / page_size * 8);
+    uint64_t pages[512];
+    for (size_t i = 0; i < nb_pages; i += 512) {
+        size_t n = (nb_pages - i < 512) ? (nb_pages - i) : 512;
+        ssize_t ret = pread(spmfd, pages, n * 8, offset + i * 8);
+        if (ret != static_cast<ssize_t>(n * 8))
+            return false;
+        for (size_t j = 0; j < n; j++)
+            if (pages[j] & ((0x1ull << 63) | (0x1ull << 62)))
+                return false;
+    }
+    return true;
 }
 
 void Area::fillDeletedFd()

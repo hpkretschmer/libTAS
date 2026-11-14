@@ -23,11 +23,13 @@
 
 #include <cerrno>
 #include <unistd.h> // dup
+#include <sys/resource.h> // getrlimit
 
 namespace libtas {
 
 /* Array of fds used to obtain the correct fd values */
-static int tmp_fds[256] = {};
+/* Enough to reserve all fds below reserveState() */
+static int tmp_fds[4096 + 64] = {};
 static int tmp_fds_index = -1;
 static constexpr int tmp_fds_capacity = sizeof(tmp_fds) / sizeof(tmp_fds[0]);
 
@@ -78,7 +80,19 @@ int FileDescriptorManip::enforceNext(int fd)
 
 int FileDescriptorManip::reserveState()
 {
-    return 240;
+    /* All file descriptors of the game below this value are synced when
+     * loading a savestate, and the ones that libTAS opens while loading are
+     * above it. Games like NW.js ones have hundreds of file descriptors, so
+     * use the highest value we can, keeping some room for ours below the
+     * limit of open files. */
+    struct rlimit rl;
+    int limit = 4096;
+    if ((getrlimit(RLIMIT_NOFILE, &rl) == 0) && (rl.rlim_cur != RLIM_INFINITY) &&
+        (rl.rlim_cur < static_cast<rlim_t>(limit + 64)))
+        limit = static_cast<int>(rl.rlim_cur) - 64;
+    if (limit < 240)
+        limit = 240;
+    return limit;
 }
 
 int FileDescriptorManip::reserveUntilState()
