@@ -27,7 +27,9 @@
 
 namespace libtas {
 
-    
+/* CRASHDBG (temporary): append a line to the file in env LIBTAS_CRASH_LOG */
+void crashlog_event(const char* fmt, ...);
+
 #if defined(__APPLE__) && defined(__MACH__)
 typedef void (*sighandler_t) (int);
 #endif

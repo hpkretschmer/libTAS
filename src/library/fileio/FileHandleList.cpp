@@ -22,6 +22,7 @@
 #include "FileDescriptorManip.h"
 #include "SaveFile.h"
 #include "SaveFileList.h"
+#include "../general/signalwrappers.h" // CRASHDBG
 
 #include "logging.h"
 #include "Profiler.h"
@@ -435,6 +436,7 @@ void syncFileDescriptors(const DeletedFileMapping* deleted_mappings, int deleted
             /* Check for matching path */
             if (0 != strcmp(fh.fileName, buf)) {
                 LOG(LL_DEBUG, LCF_CHECKPOINT | LCF_FILEIO, "File descriptor %d is currently linked to %s, but was linked to %s in savestate", fd, buf, fh.fileName);
+                crashlog_event("fd %d is %s, was %s", fd, buf, fh.fileName); // CRASHDBG
                 close(fd);
                 fdOpened = false;
             }
@@ -443,12 +445,14 @@ void syncFileDescriptors(const DeletedFileMapping* deleted_mappings, int deleted
             /* The file descriptor must be closed, because it is not present in
              * the savestate */
             LOG(LL_DEBUG, LCF_CHECKPOINT | LCF_FILEIO, "File %s with fd %d should not be present after loading the state, so it is closed", buf, fd);
+            crashlog_event("closed fd %d %s", fd, buf); // CRASHDBG
             close(fd);
         }
         if (fdRegistered && !fdOpened) {
             /* The file descriptor must be opened, because it is present in
              * the savestate */
             LOG(LL_DEBUG, LCF_CHECKPOINT | LCF_FILEIO, "File %s with fd %d should be opened", fh.fileName, fd);
+            crashlog_event("fd %d %s should be opened", fd, fh.fileName); // CRASHDBG
 
             /* We must open the file with the same fd as the one saved in the state */
             int next_fd = FileDescriptorManip::enforceNext(fd);
@@ -496,6 +500,7 @@ void syncFileDescriptors(const DeletedFileMapping* deleted_mappings, int deleted
                     close(new_fd);
                     continue;
                 }
+                crashlog_event("reopened deleted fd %d %s", fd, fh.fileName); // CRASHDBG
             }
             else if (sf) {
                 int new_fd = syscall(SYS_memfd_create, sf->filename.c_str(), 0);
@@ -542,6 +547,7 @@ void syncFileDescriptors(const DeletedFileMapping* deleted_mappings, int deleted
             }
             else {
                 LOG(LL_ERROR, LCF_CHECKPOINT | LCF_FILEIO, "Non-standard file %s is supposed to be opened after state loaded", fh.fileName);
+                crashlog_event("could not reopen fd %d %s", fd, fh.fileName); // CRASHDBG
             }
         }
     }

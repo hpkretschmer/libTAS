@@ -20,6 +20,7 @@
 */
 
 #include "Checkpoint.h"
+#include "../general/signalwrappers.h" // CRASHDBG
 #include "ThreadManager.h"
 #include "SaveStateManager.h"
 #include "AltStack.h"
@@ -199,6 +200,20 @@ void Checkpoint::setCurrentToParent()
         parent_ss_index = ss_index;
     }
 }
+
+
+/* CRASHDBG: run the debug-level verifications of incremental savestates when
+ * the crash log is enabled, and report mismatches there (at most 300 lines) */
+static int crashdbg_lines = 0;
+static int crashdbg_count = 0;
+static int crashdbg_swapped = 0;
+static bool crashdbg_verify()
+{
+    static int on = -1;
+    if (on < 0) on = (getenv("LIBTAS_CRASH_LOG") != nullptr);
+    return on;
+}
+#define CRASHDBG_REPORT(...) do { crashdbg_count++; if (crashdbg_lines++ < 300) crashlog_event(__VA_ARGS__); } while (0)
 
 static void resetParent()
 {
@@ -529,7 +544,9 @@ static void readAllAreas()
     }
 
     close(spmfd);
+    if (crashdbg_verify()) { crashlog_event("verify restore: %d mismatches, %d swapped pages", crashdbg_count, crashdbg_swapped); crashdbg_count = 0; crashdbg_swapped = 0; crashdbg_lines = 0; } // CRASHDBG
 }
+
 
 /* Returns if the file descriptor saved with an area (the game's descriptor of
  * a deleted file) still refers to the file of that area. The game may have
@@ -821,8 +838,10 @@ static int reallocateArea(Area *saved_area, Area *current_area)
                 /* The file of a shared mapping is gone: recreate it, shared
                  * with the other mappings of the same file */
                 imagefd = recreatedFileFd(saved_area);
-                if (imagefd >= 0)
-                    recreated = true;
+                if (imagefd >= 0) {
+                    recreated = true; // CRASHDBG braces
+                    crashlog_event("recreated shared file %s for %p-%p", saved_area->name, saved_area->addr, saved_area->endAddr); // CRASHDBG
+                }
                 else {
                     saved_area->flags &= ~Area::AREA_FILE;
                     saved_area->flags |= Area::AREA_ANON;
@@ -881,6 +900,22 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
      * they read as zero again like in the savestate: allocators like the one
      * of Blink (NW.js) expect newly committed pages to be zero. */
     if (saved_area.uncommitted) {
+        if (crashdbg_verify() && saved_area.size <= (1ul << 30)) { // CRASHDBG: count pages that still hold data
+            size_t ps = Utils::getPageSize();
+            int present = 0, nonzero = 0;
+            for (char* a = static_cast<char*>(saved_area.addr); a < static_cast<char*>(saved_area.endAddr); a += ps) {
+                uint64_t pe = 0;
+                pread(spmfd, &pe, 8, static_cast<off_t>(reinterpret_cast<uintptr_t>(a) / ps * 8));
+                if (pe & ((0x1ull << 63) | (0x1ull << 62))) {
+                    present++;
+                    MYASSERT(mprotect(a, ps, PROT_READ) == 0)
+                    if (!Utils::isZeroPage(a)) nonzero++;
+                    MYASSERT(mprotect(a, ps, saved_area.prot) == 0)
+                }
+            }
+            if (present)
+                crashlog_event("uncommitted area %p-%p: %d pages present, %d with data", saved_area.addr, saved_area.endAddr, present, nonzero);
+        }
         MYASSERT(madvise(saved_area.addr, saved_area.size, MADV_DONTNEED) == 0)
         return;
     }
@@ -902,6 +937,7 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
     int pagecount_full = 0;
     int pagecount_base = 0;
     int pagecount_skip = 0;
+    int pagecount_absent_skip = 0; // CRASHDBG
 
     /* Original file descriptor. Do not open the file yet, because we may not 
      * need to open it at all. */
@@ -964,6 +1000,8 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
         bool page_guard_region = page & (0x1ull << 58);
         bool page_file = page & (0x1ull << 61);
         bool page_present = page & (0x1ull << 63);
+
+        if (page & (0x1ull << 62)) crashdbg_swapped++; // CRASHDBG
 
         /* Soft-dirty bits only see writes through this mapping. A shared
          * mapping can be written through another mapping of the same file
@@ -1083,9 +1121,10 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
                 }
                 else {
                     pagecount_skip++;
-                    if (Global::shared_config.logging_level >= LL_DEBUG) {
+                    if (Global::shared_config.logging_level >= LL_DEBUG || crashdbg_verify()) {
                         if (!Utils::isZeroPage(static_cast<void*>(curAddr))) {
                             LOG(LL_WARN, LCF_CHECKPOINT, "     Page %p was guessed to be zero, but is actually not!", curAddr);
+                            CRASHDBG_REPORT("restore %p: page was guessed to be zero, but is actually not! (area %p %s)", curAddr, saved_area.addr, saved_area.name);
                         }
                     }
                 }
@@ -1184,11 +1223,13 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
             }
 
             pagecount_skip++;
+            if (!page_present && !(page & (0x1ull << 62))) pagecount_absent_skip++; // CRASHDBG
             /* Double-check that page is indeed identical to the base savestate */
-            if (Global::shared_config.logging_level >= LL_DEBUG) {
+            if (Global::shared_config.logging_level >= LL_DEBUG || crashdbg_verify()) {
                 base_state.getPageFlag(curAddr);
                 if (!base_state.debugIsMatchingPage(curAddr)) {
                     LOG(LL_WARN, LCF_CHECKPOINT, "     Page %p was guessed to be identical to base state, but is actually not!", curAddr);                                
+                    CRASHDBG_REPORT("restore %p: page was guessed to be identical to base state, but is actually not! (area %p %s)", curAddr, saved_area.addr, saved_area.name);
                 }
             }
         }
@@ -1199,6 +1240,8 @@ static void readAnArea(SaveStateLoading &saved_state, int spmfd, PagemapCache &p
     }
     base_state.finishLoad();
     saved_state.finishLoad();
+    if (pagecount_absent_skip) // CRASHDBG
+        crashlog_event("restore %p-%p %s: %d pages skipped as unchanged although not present", saved_area.addr, saved_area.endAddr, saved_area.name, pagecount_absent_skip);
 
     if (Global::shared_config.savestate_settings & SharedConfig::SS_INCREMENTAL) {
         LOG(LL_DEBUG, LCF_CHECKPOINT, "    Pagecount full: %d, zero/file: %d, base: %d, skipped: %d", pagecount_full, pagecount_zero_or_file, pagecount_base, pagecount_skip);
@@ -1381,6 +1424,7 @@ static void writeAllAreas(bool base)
 
     new_time = TimeHolder::now();
     delta_time = new_time - old_time;
+    if (crashdbg_verify()) { crashlog_event("verify save%s: %d mismatches, %d swapped pages", base?" (base)":"", crashdbg_count, crashdbg_swapped); crashdbg_count = 0; crashdbg_swapped = 0; crashdbg_lines = 0; } // CRASHDBG
     LOG(LL_INFO, LCF_CHECKPOINT, "Saved state %d of size %zu in %f seconds", base?0:ss_index, savestate_size, delta_time.tv_sec + ((double)delta_time.tv_nsec) / 1000000000.0);
 
     if (Global::shared_config.savestate_settings & SharedConfig::SS_FORK) {
@@ -1475,6 +1519,8 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
         bool page_guard_region = page & (0x1ull << 58);
         bool page_file = page & (0x1ull << 61);
         bool page_present = page & (0x1ull << 63);
+
+        if (page & (0x1ull << 62)) crashdbg_swapped++; // CRASHDBG
 
         /* See readAnArea(): pages of shared mappings may have been modified
          * through another mapping, which soft-dirty bits do not see. */
@@ -1614,9 +1660,10 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
                     pagecount_zero_or_file++;
                     
                     /* Double-check that page is indeed zero */
-                    if (Global::shared_config.logging_level >= LL_DEBUG) {
+                    if (Global::shared_config.logging_level >= LL_DEBUG || crashdbg_verify()) {
                         if (!Utils::isZeroPage(static_cast<void*>(curAddr))) {
                             LOG(LL_WARN, LCF_CHECKPOINT, "     Page %p was guessed to be zero, but is actually not!", curAddr);
+                            CRASHDBG_REPORT("save %p: page was guessed to be zero, but is actually not! (area %p %s)", curAddr, area.addr, area.name);
                         }
                     }
                 }
@@ -1624,15 +1671,17 @@ static size_t writeAnArea(SaveStateSaving &state, Area &area, int spmfd, Pagemap
                     pagecount_base++;
 
                     /* Double-check that page is indeed identical to the base savestate */
-                    if (Global::shared_config.logging_level >= LL_DEBUG) {
+                    if (Global::shared_config.logging_level >= LL_DEBUG || crashdbg_verify()) {
                         char base_flag = base_state.getPageFlag(curAddr);
                         
                         if ((base_flag != Area::FULL_PAGE) && (base_flag != Area::COMPRESSED_PAGE)) {
                             LOG(LL_WARN, LCF_CHECKPOINT, "     No base page for %p, this should not happen!", curAddr);
+                            CRASHDBG_REPORT("save %p: No base page for page, this should not happen! (area %p %s)", curAddr, area.addr, area.name);
                         }
 
                         if (!base_state.debugIsMatchingPage(curAddr)) {
                             LOG(LL_WARN, LCF_CHECKPOINT, "     Page %p was guessed to be identical to base state, but is actually not!", curAddr);                                
+                            CRASHDBG_REPORT("save %p: page was guessed to be identical to base state, but is actually not! (area %p %s)", curAddr, area.addr, area.name);
                         }
                     }
                 }

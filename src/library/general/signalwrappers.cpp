@@ -27,6 +27,14 @@
 
 #include <cstring>
 #include <csignal>
+#include <cstdarg>
+#include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <ucontext.h>
+#include <sys/uio.h>
 
 namespace libtas {
 
@@ -48,6 +56,125 @@ static struct sigaction savedSuspendAction = {};
 static struct sigaction savedCheckpointAction = {};
 static bool savedSuspendActionValid = false;
 static bool savedCheckpointActionValid = false;
+
+
+/* CRASHDBG (temporary): with env LIBTAS_CRASH_LOG=<file>, log savestate events and,
+ * on a crash, the faulting address, registers, /proc/self/maps and a stack scan,
+ * before calling the game's own crash handler. */
+extern uint64_t framecount;
+static int crashlog_state = 0; /* 0 unknown, 1 on, -1 off */
+static char crashlog_path[512];
+static struct sigaction crashGameAction[65];
+static bool crashGameActionValid[65];
+
+static bool crashlog_on()
+{
+    if (crashlog_state == 0) {
+        const char* p = getenv("LIBTAS_CRASH_LOG");
+        if (p && p[0]) { strncpy(crashlog_path, p, sizeof(crashlog_path)-1); crashlog_state = 1; }
+        else crashlog_state = -1;
+    }
+    return crashlog_state == 1;
+}
+
+static void crashlog_write(const char* buf, size_t len)
+{
+    int fd = syscall(SYS_openat, AT_FDCWD, crashlog_path, O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
+    if (fd < 0) return;
+    while (len > 0) {
+        ssize_t r = syscall(SYS_write, fd, buf, len);
+        if (r <= 0) break;
+        buf += r; len -= r;
+    }
+    syscall(SYS_close, fd);
+}
+
+void crashlog_event(const char* fmt, ...)
+{
+    if (!crashlog_on()) return;
+    char buf[1024];
+    struct timespec ts;
+    syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts);
+    int n = snprintf(buf, sizeof(buf), "%ld.%03ld f:%llu tid:%ld ", (long)ts.tv_sec, ts.tv_nsec/1000000,
+        (unsigned long long)framecount, (long)syscall(SYS_gettid));
+    va_list args;
+    va_start(args, fmt);
+    n += vsnprintf(buf+n, sizeof(buf)-n-1, fmt, args);
+    va_end(args);
+    if (n > (int)sizeof(buf)-2) n = sizeof(buf)-2;
+    buf[n++] = '\n';
+    crashlog_write(buf, n);
+}
+
+static void crashlog_handler(int sig, siginfo_t* info, void* uc)
+{
+    char name[17] = {};
+    prctl(PR_GET_NAME, name);
+    ucontext_t* ctx = static_cast<ucontext_t*>(uc);
+    greg_t* r = ctx->uc_mcontext.gregs;
+    crashlog_event("CRASH signal %d code %d addr %p thread '%s' rip %llx rsp %llx rbp %llx rax %llx rbx %llx rcx %llx rdx %llx rsi %llx rdi %llx r8 %llx r9 %llx r10 %llx r11 %llx r12 %llx r13 %llx r14 %llx r15 %llx trapno %llx err %llx",
+        sig, info->si_code, info->si_addr, name,
+        (unsigned long long)r[REG_RIP], (unsigned long long)r[REG_RSP], (unsigned long long)r[REG_RBP],
+        (unsigned long long)r[REG_RAX], (unsigned long long)r[REG_RBX], (unsigned long long)r[REG_RCX],
+        (unsigned long long)r[REG_RDX], (unsigned long long)r[REG_RSI], (unsigned long long)r[REG_RDI],
+        (unsigned long long)r[REG_R8], (unsigned long long)r[REG_R9], (unsigned long long)r[REG_R10],
+        (unsigned long long)r[REG_R11], (unsigned long long)r[REG_R12], (unsigned long long)r[REG_R13],
+        (unsigned long long)r[REG_R14], (unsigned long long)r[REG_R15],
+        (unsigned long long)r[REG_TRAPNO], (unsigned long long)r[REG_ERR]);
+
+    /* Memory map */
+    {
+        crashlog_write("MAPS\n", 5);
+        int fd = syscall(SYS_openat, AT_FDCWD, "/proc/self/maps", O_RDONLY|O_CLOEXEC);
+        if (fd >= 0) {
+            char buf[4096];
+            ssize_t len;
+            while ((len = syscall(SYS_read, fd, buf, sizeof(buf))) > 0)
+                crashlog_write(buf, len);
+            syscall(SYS_close, fd);
+        }
+        crashlog_write("END\n", 4);
+    }
+
+    /* Stack scan: up to 2048 words from rsp, read with process_vm_readv so
+     * that the end of the stack mapping does not fault */
+    {
+        char buf[4096];
+        int n = snprintf(buf, sizeof(buf), "STACK\n");
+        unsigned long long words[64];
+        char* sp = reinterpret_cast<char*>(r[REG_RSP]);
+        for (int chunk = 0; chunk < 32; chunk++) {
+            struct iovec local = {words, sizeof(words)};
+            struct iovec remote = {sp + chunk*sizeof(words), sizeof(words)};
+            ssize_t got = syscall(SYS_process_vm_readv, syscall(SYS_getpid), &local, 1, &remote, 1, 0);
+            if (got <= 0) break;
+            for (int i = 0; i < got/8; i++) {
+                n += snprintf(buf+n, sizeof(buf)-n, "%llx\n", words[i]);
+                if (n > (int)sizeof(buf) - 40) { crashlog_write(buf, n); n = 0; }
+            }
+            if (got < (ssize_t)sizeof(words)) break;
+        }
+        crashlog_write(buf, n);
+        crashlog_write("STACKEND\n", 9);
+    }
+
+    /* Call the game's handler */
+    if (sig > 0 && sig < 65 && crashGameActionValid[sig]) {
+        struct sigaction& ga = crashGameAction[sig];
+        if (ga.sa_flags & SA_SIGINFO) { ga.sa_sigaction(sig, info, uc); return; }
+        if (ga.sa_handler != SIG_DFL && ga.sa_handler != SIG_IGN) { ga.sa_handler(sig); return; }
+    }
+    /* Default action */
+    struct sigaction dfl = {};
+    dfl.sa_handler = SIG_DFL;
+    orig::sigaction(sig, &dfl, nullptr);
+    raise(sig);
+}
+
+static bool crashlog_is_crash_signal(int sig)
+{
+    return sig == SIGSEGV || sig == SIGBUS || sig == SIGILL || sig == SIGFPE || sig == SIGABRT || sig == SIGTRAP;
+}
 
 static int signalMaskBit(int sig)
 {
@@ -293,6 +420,30 @@ static int signalMaskBit(int sig)
         LOG(LL_DEBUG, LCF_SIGNAL, "    Setting handler %p for signal %d (%s)", (act->sa_flags & SA_SIGINFO)?
                 reinterpret_cast<void*>(act->sa_sigaction):
                 reinterpret_cast<void*>(act->sa_handler), sig, strsignal(sig));
+    }
+
+    /* CRASHDBG: put our crash logger in front of the game's crash handlers */
+    if (crashlog_is_crash_signal(sig) && crashlog_on()) {
+        struct sigaction prev = crashGameAction[sig];
+        bool prevValid = crashGameActionValid[sig];
+        int ret = 0;
+        if (act != nullptr) {
+            crashGameAction[sig] = *act;
+            crashGameActionValid[sig] = true;
+            struct sigaction ours = *act;
+            if (act->sa_handler != SIG_DFL && act->sa_handler != SIG_IGN) {
+                ours.sa_sigaction = crashlog_handler;
+                ours.sa_flags |= SA_SIGINFO;
+            }
+            ret = orig::sigaction(sig, &ours, nullptr);
+            crashlog_event("sigaction %d handler %p flags %x", sig, (act->sa_flags & SA_SIGINFO)?
+                reinterpret_cast<void*>(act->sa_sigaction): reinterpret_cast<void*>(act->sa_handler), act->sa_flags);
+        }
+        if (oact != nullptr) {
+            if (prevValid) *oact = prev;
+            else orig::sigaction(sig, nullptr, oact);
+        }
+        return ret;
     }
 
     int ret = orig::sigaction(sig, act, oact);

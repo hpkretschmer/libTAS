@@ -20,6 +20,7 @@
 */
 
 #include "SaveStateLoading.h"
+#include "../general/signalwrappers.h" // CRASHDBG
 #include "StateHeader.h"
 
 #include "Utils.h"
@@ -289,7 +290,24 @@ bool SaveStateLoading::debugIsMatchingPage(char* addr)
         }
     }
     
-    return 0 == memcmp(addr, current_page, page_size);
+    bool same = (0 == memcmp(addr, current_page, page_size));
+    /* CRASHDBG: report the differing words */
+    static int reported = 0;
+    if (!same && reported < 40) {
+        reported++;
+        int shown = 0, total = 0;
+        uint64_t* cur = reinterpret_cast<uint64_t*>(addr);
+        uint64_t* old = reinterpret_cast<uint64_t*>(current_page);
+        for (size_t i = 0; i < page_size/8; i++) {
+            if (cur[i] != old[i]) {
+                total++;
+                if (shown++ < 24)
+                    crashlog_event("  diff %p: now %llx, state %llx", &cur[i], (unsigned long long)cur[i], (unsigned long long)old[i]);
+            }
+        }
+        crashlog_event("  %d differing words in page %p", total, addr);
+    }
+    return same;
 }
 
 }

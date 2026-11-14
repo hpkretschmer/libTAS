@@ -27,6 +27,7 @@
 #include "encoding/AVEncoder.h"
 #include "encoding/Screenshot.h"
 #include "general/timewrappers.h" // clock_gettime
+#include "general/signalwrappers.h" // CRASHDBG crashlog_event
 #ifdef __unix__
 #include "xlib/xshm.h" // x11::fullRedrawRequested
 #endif
@@ -226,6 +227,7 @@ void frameBoundary(std::function<void()> draw, RenderHUD& hud)
 
     /* First, increase the frame count */
     ++framecount;
+    crashlog_event("frame%s%s", draw?"":" nodraw", Global::shared_config.fastforward?" ff":""); // CRASHDBG
 
     /* Compute new FPS values */
     if (draw) {
@@ -665,8 +667,16 @@ static void receive_messages(std::function<void()> draw, RenderHUD& hud)
                 break;
 
             case MSGN_CONFIG:
+            {
+                bool old_running = Global::shared_config.running; // CRASHDBG
+                bool old_ff = Global::shared_config.fastforward;
                 receiveData(&Global::shared_config, sizeof(SharedConfig));
+                if (old_running != Global::shared_config.running)
+                    crashlog_event(Global::shared_config.running ? "play" : "pause");
+                if (old_ff != Global::shared_config.fastforward)
+                    crashlog_event(Global::shared_config.fastforward ? "fastforward on" : "fastforward off");
                 break;
+            }
 
             case MSGN_DUMP_FILE:
                 LOG(LL_DEBUG, LCF_SOCKET, "Receiving dump filename");
@@ -740,7 +750,9 @@ static void receive_messages(std::function<void()> draw, RenderHUD& hud)
                     // screen_redraw(draw, hud, preview_ai, true);
                 }
 
+                crashlog_event("save slot %d start", slot); // CRASHDBG
                 status = SaveStateManager::checkpoint(slot);
+                crashlog_event("%s slot %d done, status %d", SaveStateManager::isLoading() ? "load" : "save", slot, status); // CRASHDBG
 
                 if (status == 0) {
                     /* Current savestate is now the parent savestate */
@@ -802,7 +814,9 @@ static void receive_messages(std::function<void()> draw, RenderHUD& hud)
                 // Force redraw because screen refresh won't happen during state loading
                 screen_redraw(draw, hud, preview_ai, true);
 
+                crashlog_event("load slot %d start", slot); // CRASHDBG
                 status = SaveStateManager::restore(slot);
+                crashlog_event("load slot %d FAILED, status %d", slot, status); // CRASHDBG
 
                 SaveStateManager::printError(status);
 
