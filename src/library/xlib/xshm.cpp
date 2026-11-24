@@ -40,6 +40,7 @@ DEFINE_ORIG_POINTER(XPutImage)
 
 XImage* x11::gameXImage = nullptr;
 bool x11::fullRedrawRequested = false;
+XImage* x11::hudXImage = nullptr;
 
 /* XPutImage callers may pass a temporary XImage structure, so we keep a copy.
  * Its pixel data must stay valid, which is the case for Chromium. */
@@ -163,6 +164,8 @@ OVERRIDE int XPutImage(
         else {
             NATIVECALL(ret = orig::XPutImage(dpy, d, gc, image, src_x, src_y, dst_x, dst_y, width, height));
         }
+        /* The next screen capture is of the game image again */
+        x11::hudXImage = nullptr;
     }, renderHUD);
 
     PageFrame::frameEnded();

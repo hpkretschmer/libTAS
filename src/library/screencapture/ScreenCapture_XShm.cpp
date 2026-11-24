@@ -79,8 +79,14 @@ int ScreenCapture_XShm::copyScreenToSurface()
         return -1;
     }
     
+    /* After the HUD was rendered on a copy of an XPutImage game image, capture
+     * the copy, so that the OSD can be encoded */
+    const XImage* image = x11::gameXImage;
+    if (x11::hudXImage && (x11::hudXImage->width == width) && (x11::hudXImage->height == height))
+        image = x11::hudXImage;
+
     /* There is no designated surface for XShm, just copy to our array */
-    return copyPixelRows(x11::gameXImage->data, x11::gameXImage->bytes_per_line);
+    return copyPixelRows(image->data, image->bytes_per_line);
 }
 
 int ScreenCapture_XShm::getPixelsFromSurface(uint8_t **pixels, bool draw)

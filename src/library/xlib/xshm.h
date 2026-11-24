@@ -33,7 +33,11 @@ namespace x11 {
 
 /* Set after loading a savestate: the window shows a frame from before
  * loading, so the next XPutImage draw must present the whole image */
-extern bool fullRedrawRequested;    
+extern bool fullRedrawRequested;
+
+/* Copy of the XPutImage game image with the HUD drawn on it, between the
+ * rendering of the HUD and the draw of the frame (for encoding the OSD) */
+extern XImage* hudXImage;
 }
 
 OVERRIDE Bool XShmPutImage(

@@ -21,6 +21,7 @@
 
 #include "logging.h"
 #include "GlobalState.h"
+#include "xlib/xshm.h" // x11::hudXImage
 
 #include "../external/imgui/imgui.h"
 #include "../external/imgui/imgui_impl_xlib.h"
@@ -48,6 +49,7 @@ void RenderHUD_XImage::setImage(const XImage* image)
 void RenderHUD_XImage::newFrame()
 {
     rendered = false;
+    x11::hudXImage = nullptr;
 
     if (!ImGui::GetCurrentContext()) {
         if (!gameImage || (gameImage->bits_per_pixel != 32))
@@ -212,6 +214,9 @@ void RenderHUD_XImage::render()
     }
 
     rendered = true;
+
+    /* Screen capture of this frame (for encoding the OSD) includes the HUD */
+    x11::hudXImage = &hudImage;
 }
 
 XImage* RenderHUD_XImage::renderedImage()
