@@ -21,6 +21,10 @@
 //   file and zlib operations (NW.js) are in progress, the page's animation
 //   frames are held back, so that loading takes no frames, as if loading was
 //   instant.
+// - Videos: a video counts as a load until it has data, and for the page, its
+//   position advances one frame duration (times its playback rate) per frame,
+//   so that it ends at the same frame in each run. The browser still plays it
+//   for its picture and sound, corrected when it is too far off.
 // - Fast-forward: when libTAS skips drawing a frame, the page does not draw on
 //   the canvases shown on screen, and the frame runs right after the previous
 //   one and ends without waiting for the browser to present it.
@@ -403,6 +407,201 @@
     }
 
     //-------------------------------------------------------------------------
+    // Videos
+    //-------------------------------------------------------------------------
+
+    /* Videos load and play in real time. A video counts as a load until it has
+     * data, and for the page, its position advances one frame duration (times
+     * its playback rate) per frame, so that its time, its end and the events
+     * of its end are at the same frame in each run. The browser still plays the
+     * video for its picture and sound, and its position is corrected when it
+     * is too far from the page's. Its own end and time update events, which
+     * come at a time that varies, are replaced by ours. */
+    var mediaProto = window.HTMLMediaElement && HTMLMediaElement.prototype;
+    var videoProto = window.HTMLVideoElement && HTMLVideoElement.prototype;
+    var playingVideos = new Set();
+
+    if (mediaProto && videoProto) {
+        var nativeTime = Object.getOwnPropertyDescriptor(mediaProto, 'currentTime');
+        var nativeSrc = Object.getOwnPropertyDescriptor(mediaProto, 'src');
+        var nativePlay = mediaProto.play;
+        var nativePause = mediaProto.pause;
+        var nativeLoad = mediaProto.load;
+        var videoStates = new WeakMap();
+
+        var videoState = function(video) {
+            var state = videoStates.get(video);
+            if (!state) {
+                state = {time: 0, playing: false, ended: false, seeks: 0};
+                videoStates.set(video, state);
+            }
+            return state;
+        };
+
+        var trackVideo = function(video) {
+            /* Not 'emptied', which setting the source fires first */
+            var ends = ['loadeddata', 'error', 'abort'];
+            /* Without preloading, the browser stops before having data */
+            if (video.preload !== 'auto' && video.preload !== '')
+                ends.push('suspend');
+            track(video, ends);
+        };
+
+        var resetVideo = function(video) {
+            var state = videoState(video);
+            state.time = 0;
+            state.ended = false;
+            if (state.playing) {
+                state.playing = false;
+                playingVideos.delete(video);
+            }
+        };
+
+        Object.defineProperty(videoProto, 'src', {
+            get: nativeSrc.get,
+            set: function(value) {
+                resetVideo(this);
+                if (value)
+                    trackVideo(this);
+                nativeSrc.set.call(this, value);
+            },
+            configurable: true, enumerable: true
+        });
+
+        videoProto.load = function() {
+            resetVideo(this);
+            if (this.currentSrc || this.getAttribute('src') || this.querySelector('source'))
+                trackVideo(this);
+            return nativeLoad.apply(this, arguments);
+        };
+
+        var setNativeTime = function(video, time) {
+            videoState(video).seeks++;
+            nativeTime.set.call(video, time);
+        };
+
+        Object.defineProperty(videoProto, 'currentTime', {
+            get: function() { return videoState(this).time; },
+            set: function(value) {
+                var state = videoState(this);
+                state.time = Number(value) || 0;
+                state.ended = false;
+                nativeTime.set.call(this, value);
+            },
+            configurable: true, enumerable: true
+        });
+        Object.defineProperty(videoProto, 'paused', {
+            get: function() { return !videoState(this).playing; },
+            configurable: true, enumerable: true
+        });
+        Object.defineProperty(videoProto, 'ended', {
+            get: function() { return videoState(this).ended; },
+            configurable: true, enumerable: true
+        });
+
+        videoProto.play = function() {
+            var state = videoState(this);
+            if (state.ended) {
+                state.time = 0;
+                state.ended = false;
+                setNativeTime(this, 0);
+            }
+            state.playing = true;
+            playingVideos.add(this);
+            return nativePlay.apply(this, arguments);
+        };
+        videoProto.pause = function() {
+            var state = videoState(this);
+            state.playing = false;
+            playingVideos.delete(this);
+            return nativePause.apply(this, arguments);
+        };
+
+        /* Drop the browser's own events that depend on real time, before the
+         * page's listeners (capture on window comes first). Ours are not
+         * trusted. */
+        var dropNative = function(event) {
+            var video = event.target;
+            if (!event.isTrusted || !(video instanceof HTMLVideoElement) || (event.libtasSeen))
+                return;
+            event.libtasSeen = true;
+            var state = videoState(video);
+            var drop = (event.type === 'ended') || (event.type === 'timeupdate') ||
+                ((event.type === 'pause') && state.playing);
+            if ((event.type === 'seeking') || (event.type === 'seeked')) {
+                /* Seeks of our position corrections */
+                drop = state.seeks > 0;
+                if (drop && event.type === 'seeked')
+                    state.seeks--;
+            }
+            if (drop)
+                event.stopImmediatePropagation();
+        };
+        /* Media events don't bubble, and capture on window only sees videos
+         * in the document, so also listen on each video when it is created,
+         * before the page's own listeners */
+        var nativeEvents = ['ended', 'timeupdate', 'pause', 'seeking', 'seeked'];
+        nativeEvents.forEach(function(type) {
+            window.addEventListener(type, dropNative, true);
+        });
+        var listenVideo = function(video) {
+            nativeEvents.forEach(function(type) {
+                video.addEventListener(type, dropNative, true);
+            });
+        };
+        var createElement = Document.prototype.createElement;
+        Document.prototype.createElement = function(tagName) {
+            var element = createElement.apply(this, arguments);
+            if (element instanceof HTMLVideoElement)
+                listenVideo(element);
+            return element;
+        };
+    }
+
+    var fire = function(video, type) {
+        video.dispatchEvent(new Event(type));
+    };
+
+    /* Advance the playing videos by one frame, at the start of the frame */
+    function advanceVideos() {
+        if (!playingVideos.size)
+            return;
+        playingVideos.forEach(function(video) {
+            var duration = video.duration;
+            if (!(duration > 0) || !isFinite(duration))
+                return;
+            var state = videoState(video);
+            state.time += frameDuration / 1000 * video.playbackRate;
+            if (state.time >= duration) {
+                if (video.loop) {
+                    state.time %= duration;
+                }
+                else {
+                    state.time = duration;
+                    state.playing = false;
+                    state.ended = true;
+                    playingVideos.delete(video);
+                    nativePause.call(video);
+                    fire(video, 'timeupdate');
+                    fire(video, 'pause');
+                    fire(video, 'ended');
+                    return;
+                }
+            }
+            /* About four time updates per second, like the browser */
+            if ((frames % 15) === 0)
+                fire(video, 'timeupdate');
+            /* Keep the picture close to the page's position. Only when the
+             * browser can play, and not too often: seeking takes a while. */
+            if (!video.seeking && (video.readyState >= 3) && ((frames - (state.lastSeek || 0)) >= 30) &&
+                (Math.abs(nativeTime.get.call(video) - state.time) > 0.2)) {
+                state.lastSeek = frames;
+                setNativeTime(video, state.time);
+            }
+        });
+    }
+
+    //-------------------------------------------------------------------------
     // Skipped draws
     //-------------------------------------------------------------------------
 
@@ -549,6 +748,8 @@
         toggleMarker();
         frames++;
         clock += frameDuration;
+
+        advanceVideos();
 
         var current = callbacks;
         callbacks = [];
